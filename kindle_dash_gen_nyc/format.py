@@ -34,13 +34,22 @@ def format_temp(celsius: float | None, units: str) -> str:
 
 
 def format_reading(temp: Temperature | None, units: str) -> str:
-    """Format a temperature reading, appending "(feels X)" when it differs from actual."""
+    """Format a temperature reading, appending the feels-like in angle brackets when it differs."""
     if temp is None:
         return "—"
     base = format_temp(temp.real, units)
+    # Feels-like goes in angle brackets after the real temp, but only when it differs.
     if temp.feels_like is not None and round(temp.feels_like) != round(temp.real):
-        return f"{base} (feels {format_temp(temp.feels_like, units)})"
+        return f"{base} ⟨{format_temp(temp.feels_like, units)}⟩"
     return base
+
+
+def format_apparent(temp: Temperature | None, units: str) -> str:
+    """Format only the apparent ("feels like") temperature, falling back to the real value."""
+    if temp is None:
+        return "—"
+    value = temp.feels_like if temp.feels_like is not None else temp.real
+    return format_temp(value, units)
 
 
 def format_wind(kmh: float | None, direction: str, units: str) -> str:

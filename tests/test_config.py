@@ -59,7 +59,7 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     assert station.platforms[1].stop_id == "L03"
     assert station.platforms[1].direction == "both"  # default
     assert cfg.openrouter.model == "google/gemini-3.1-flash-lite-image"
-    assert cfg.output.width == 1448  # default
+    assert cfg.output.width == 1072  # default (portrait)
     assert cfg.output.gray_levels == 16  # default
     assert cfg.schedule.interval_minutes == 5
 

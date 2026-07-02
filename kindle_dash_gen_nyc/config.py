@@ -92,17 +92,19 @@ class OpenRouter(BaseModel):
 
     model: str
     api_key: Secret
-    prompt_template: Path | None = None
+    prompt_template: str = "dense"  # bundled template name, or a filesystem path to a .j2 file
 
 
 class Output(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: Path
-    width: int = 1448
-    height: int = 1072
+    width: int = 1072  # Kindle Voyage, portrait (native orientation)
+    height: int = 1448
     gray_levels: int = 16
     rotate: int = 0
+    aspect_ratio: str | None = None  # e.g. "4:3"; unset picks the model's nearest supported
+    resolution: str | None = None  # e.g. "1K"; unset uses the model's default
 
 
 class Schedule(BaseModel):

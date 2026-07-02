@@ -1,0 +1,81 @@
+You are an image renderer. Produce ONE grayscale dashboard image for a Kindle e-ink screen from
+the content in the DATA section below. Everything above DATA is direction for you and is NOT drawn
+in the image: do not render the words of these instructions, and do not render the DATA section's
+own field labels ("Weather", "Stations", "Current", "Condition", "High/Low", etc.). Draw only the
+actual values, plus the specific on-image labels named in quotes below ("Hourly", "Subway
+Arrivals", "Northbound", "Southbound").
+
+Canvas and style:
+- {{ width }} by {{ height }} pixels, {{ "portrait" if height >= width else "landscape" }} orientation, aspect ratio {{ aspect }}.
+- Pure grayscale: black text and thin black rules on a white background. No color, gradients,
+  photographs, logos, or decorative icons.
+- One clean, highly legible sans-serif with crisp edges for e-ink.
+- Use the full width and height with an even margin on all four sides. Balance the sections to
+  fill the height. Always keep a margin at the bottom, and never crop or cut off any text.
+
+Arrange the content from top to bottom:
+- A title row: "NYC" large and heavy-bold at the left, with the date-time at the right edge on the
+  same line, and a thick horizontal rule beneath.
+- A weather area below it: the current temperature reading very large and bold, with the condition
+  text beside it; then one evenly spaced row of stats separated by thin vertical dividers, in this
+  order: High/Low, Wind, Humidity, Dewpoint, Precip; then a single row of equal-width cells, one
+  cell per listed hour, each stacking the time, the temperature, and the rain chance, with the
+  heading "Hourly" written exactly once above the whole row (never repeat that heading); then a
+  thin horizontal rule.
+- A subway area filling the remaining height: the label "Subway Arrivals", then one column per
+  station, arranged as a row of equal-width columns. There {{ "is" if boards|length == 1 else "are" }} exactly {{ boards|length }} station{{ "s" if boards|length != 1 else "" }} to show, once each, left to right: {{ boards|map(attribute="name")|join("; ") }}. Never duplicate a station or
+  pad the row with repeats; a single station simply spans the full width. Within a station's
+  column: its name in bold with a thin underline, then "Northbound" followed by its arrivals, each
+  on its own line reading left to right: the scheduled arrival time on a 24-hour clock, then the
+  route, then an arrow "→" and the destination. Align the arrival times in a left-hand column so
+  they line up. Then "Southbound" the same way. Keep the "Northbound"
+  and "Southbound" labels aligned
+  across columns, and keep every arrival inside its own station's column.
+
+DATA
+
+Header date-time: {{ now.strftime("%a %b %d, %I:%M %p") }}
+
+Weather:
+{% if weather is not none %}
+  Current: {{ format_apparent(weather.temperature, units) }}
+  Condition: {{ weather.conditions }}
+  High/Low: {{ format_apparent(weather.high, units) }} / {{ format_apparent(weather.low, units) }}
+  Wind: {{ format_wind(weather.wind_speed_kmh, weather.wind_direction, units) }}
+  Humidity: {{ (weather.humidity ~ "%") if weather.humidity is not none else "n/a" }}
+  Dewpoint: {{ format_temp(weather.dewpoint, units) if weather.dewpoint is not none else "n/a" }}
+  Precip: {{ (weather.precip_probability ~ "%") if weather.precip_probability is not none else "n/a" }}
+  Hourly:
+{% for h in weather.hourly %}
+    {{ h.time.strftime("%H:%M") }}  {{ format_apparent(h.temperature, units) }}  {{ (h.precip_probability ~ "% rain") if h.precip_probability is not none else "no rain" }}
+{% endfor %}
+{% else %}
+  (unavailable; omit the weather area and give its space to the subway area)
+{% endif %}
+
+Stations (in order):
+{% if boards|length == 0 %}
+  (none configured; omit the subway area)
+{% else %}
+{% for board in boards %}
+  {{ board.name }}:
+{% set north = board.arrivals_by_direction.get("N", []) %}
+{% set south = board.arrivals_by_direction.get("S", []) %}
+    Northbound:
+{% if north|length == 0 %}
+      No trains
+{% else %}
+{% for a in north %}
+      {{ a.arrival.strftime("%H:%M") }}  {{ a.route }} → {{ a.destination }}
+{% endfor %}
+{% endif %}
+    Southbound:
+{% if south|length == 0 %}
+      No trains
+{% else %}
+{% for a in south %}
+      {{ a.arrival.strftime("%H:%M") }}  {{ a.route }} → {{ a.destination }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}

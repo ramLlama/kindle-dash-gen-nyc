@@ -13,9 +13,11 @@ import typer
 from . import __version__
 from .config import Config, load_config
 from .format import format_eta, format_reading, format_temp, format_wind
-from .models import Direction
+from .models import DashboardData, Direction
+from .render.openrouter import OpenRouterClient
+from .render.prompt import render_prompt
 from .sources.mta import MtaClient
-from .sources.weather import NwsClient
+from .sources.weather import NwsClient, WeatherError
 
 app = typer.Typer(
     help="Generate a Kindle e-ink dashboard with NYC weather and subway info.",
@@ -23,6 +25,8 @@ app = typer.Typer(
 )
 mta_app = typer.Typer(help="Real-time subway arrivals and station lookup.", no_args_is_help=True)
 app.add_typer(mta_app, name="mta")
+dashboard_app = typer.Typer(help="Render the dashboard image via OpenRouter.", no_args_is_help=True)
+app.add_typer(dashboard_app, name="dashboard")
 
 ConfigOption = Annotated[
     Path,
@@ -40,6 +44,24 @@ def main(ctx: typer.Context, config: ConfigOption = Path("config.toml")) -> None
 
 def _config(ctx: typer.Context) -> Config:
     return load_config(ctx.obj)
+
+
+def _gather(cfg: Config) -> DashboardData:
+    """Fetch weather and subway data for one dashboard render.
+
+    A weather-source failure degrades to ``None`` (the dashboard omits the weather panel)
+    rather than aborting the render; the subway fetch is not yet isolated (see M5 pipeline).
+    """
+    weather_client = NwsClient(
+        cfg.weather.user_agent, cfg.weather.rollover_hour, cfg.weather.hourly_hours
+    )
+    try:
+        weather = weather_client.fetch(cfg.location.latitude, cfg.location.longitude)
+    except WeatherError as exc:
+        typer.echo(f"warning: weather unavailable ({exc}); omitting weather panel", err=True)
+        weather = None
+    boards = MtaClient(cfg.stations).fetch()
+    return DashboardData(weather=weather, boards=boards, generated_at=datetime.now())
 
 
 @app.command()
@@ -113,6 +135,55 @@ def mta_list_stations() -> None:
     routes_width = max(len(routes) for _, routes, _ in rows)
     for stop_id, routes, name in rows:
         typer.echo(f"{stop_id:<{id_width}}  {routes:<{routes_width}}  {name}")
+
+
+@dashboard_app.command("preview-prompt")
+def dashboard_preview_prompt(ctx: typer.Context) -> None:
+    """Fetch live data and print the OpenRouter prompt without generating an image (debug)."""
+    cfg = _config(ctx)
+    data = _gather(cfg)
+    client = OpenRouterClient(cfg.openrouter.model)
+    aspect = client.resolve_aspect_ratio(
+        cfg.output.width, cfg.output.height, cfg.output.aspect_ratio
+    )
+    prompt = render_prompt(
+        data,
+        units=cfg.weather.units,
+        width=cfg.output.width,
+        height=cfg.output.height,
+        aspect=aspect,
+        template=cfg.openrouter.prompt_template,
+    )
+    typer.echo(prompt)
+
+
+@dashboard_app.command("render")
+def dashboard_render(
+    ctx: typer.Context,
+    output_file: Annotated[
+        Path | None, typer.Argument(help="Where to write the PNG (defaults to output.path).")
+    ] = None,
+) -> None:
+    """Fetch live data, render the prompt, and generate the dashboard PNG via OpenRouter."""
+    cfg = _config(ctx)
+    data = _gather(cfg)
+    client = OpenRouterClient(cfg.openrouter.model, cfg.openrouter.api_key.resolve())
+    aspect = client.resolve_aspect_ratio(
+        cfg.output.width, cfg.output.height, cfg.output.aspect_ratio
+    )
+    prompt = render_prompt(
+        data,
+        units=cfg.weather.units,
+        width=cfg.output.width,
+        height=cfg.output.height,
+        aspect=aspect,
+        template=cfg.openrouter.prompt_template,
+    )
+    png = client.generate(prompt, aspect_ratio=aspect, resolution=cfg.output.resolution)
+
+    path = output_file or cfg.output.path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
 
 
 def run() -> None:

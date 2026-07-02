@@ -41,7 +41,7 @@ def test_format_wind(kmh, direction, units, expected) -> None:
 @pytest.mark.parametrize(
     "temp,units,expected",
     [
-        (Temperature(31, 40.6), "us", "88°F (feels 105°F)"),
+        (Temperature(31, 40.6), "us", "88°F ⟨105°F⟩"),
         (Temperature(31, 31.2), "si", "31°C"),  # feels-like rounds to same -> omitted
         (Temperature(20, None), "us", "68°F"),  # no apparent temp
         (None, "us", "—"),

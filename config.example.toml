@@ -7,7 +7,7 @@ longitude = -73.9857
 
 [weather]
 user_agent = "kindle-dash-gen-nyc (you@example.com)"   # NWS requires a User-Agent
-units = "us"           # display units: "us" (°F), "si" (°C), or "both"
+units = "both"           # display units: "us" (°F), "si" (°C), or "both"
 rollover_hour = 20     # after this local hour, high/low show the next day
 hourly_hours = 4       # number of upcoming hourly forecasts to include
 
@@ -30,8 +30,23 @@ max_arrivals = 3           # soonest trains per direction, across all platforms
   direction = "both"       # "north", "south", or "both"
 
   [[stations."Union Sq".platforms]]
+  lines = ["4", "5", "6"]
+  stop_id = "635"
+  direction = "both"
+
+  [[stations."Union Sq".platforms]]
   lines = ["L"]
   stop_id = "L03"
+  direction = "both"
+
+# A second nearby station renders as its own column: the 6th Ave "14 St" (F, M),
+# a few blocks west of Union Sq.
+[stations."14 St-6 Av"]
+max_arrivals = 3
+
+  [[stations."14 St-6 Av".platforms]]
+  lines = ["F", "M"]
+  stop_id = "D19"
   direction = "both"
 
 [openrouter]
@@ -39,14 +54,26 @@ model = "google/gemini-3.1-flash-lite-image"
 # Provide the API key either inline or via a command that prints it:
 api_key = { value_from_cmd = "pass show openrouter/key" }
 # api_key = { value = "sk-or-..." }
-# prompt_template = "./my_prompt.j2"   # optional; omit to use the bundled default
+prompt_template = "dense"  # bundled template name, or a filesystem path to your own "*.j2" file
+# prompt_template = "./my_prompt.j2"
+
+# Custom templates (prompt_template pointing at your own file) are Jinja2 and get this context:
+#   weather -- WeatherReport | None      boards  -- list[StationBoard]
+#   units   -- "us" | "si" | "both"      width, height -- int (from [output] below)
+#   aspect  -- resolved aspect ratio, e.g. "4:3"     now -- datetime (= generation time)
+# Plus display-formatting helpers as globals:
+#   format_reading(temp, units)   format_apparent(temp, units)   format_temp(celsius, units)
+#   format_wind(kmh, direction, units)      format_eta(arrival, now)
+# See kindle_dash_gen_nyc/render/prompt.py and assets/dashboard_prompts/dense.j2 for details.
 
 [output]
 path = "./out/dashboard.png"
-width = 1448               # Kindle Voyage, landscape
-height = 1072
+width = 1072               # Kindle Voyage, portrait (native orientation)
+height = 1448
 gray_levels = 16           # Voyage 4-bit grayscale
 rotate = 0                 # degrees, if device mounting differs
+# aspect_ratio = "3:4"      # override the model's nearest-match aspect ratio; must be one it supports
+# resolution = "1K"         # override the model's default resolution; must be one it supports
 
 [schedule]
 interval_minutes = 5
