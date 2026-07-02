@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -10,15 +11,14 @@ from typing import Annotated
 
 import typer
 
-from . import __version__
+from . import __version__, pipeline
 from .config import Config, load_config
 from .format import format_eta, format_reading, format_temp, format_wind
-from .models import DashboardData, Direction
+from .models import Direction
 from .render.openrouter import OpenRouterClient
 from .render.postprocess import post_process
-from .render.prompt import render_prompt
 from .sources.mta import MtaClient
-from .sources.weather import NwsClient, WeatherError
+from .sources.weather import NwsClient
 
 app = typer.Typer(
     help="Generate a Kindle e-ink dashboard with NYC weather and subway info.",
@@ -47,28 +47,33 @@ def _config(ctx: typer.Context) -> Config:
     return load_config(ctx.obj)
 
 
-def _gather(cfg: Config) -> DashboardData:
-    """Fetch weather and subway data for one dashboard render.
-
-    A weather-source failure degrades to ``None`` (the dashboard omits the weather panel)
-    rather than aborting the render; the subway fetch is not yet isolated (see M5 pipeline).
-    """
-    weather_client = NwsClient(
-        cfg.weather.user_agent, cfg.weather.rollover_hour, cfg.weather.hourly_hours
-    )
-    try:
-        weather = weather_client.fetch(cfg.location.latitude, cfg.location.longitude)
-    except WeatherError as exc:
-        typer.echo(f"warning: weather unavailable ({exc}); omitting weather panel", err=True)
-        weather = None
-    boards = MtaClient(cfg.stations).fetch()
-    return DashboardData(weather=weather, boards=boards, generated_at=datetime.now())
-
-
 @app.command()
 def version() -> None:
     """Print the version."""
     typer.echo(__version__)
+
+
+@app.command(name="run")
+def run_dashboard(
+    ctx: typer.Context,
+    one_shot: Annotated[
+        bool,
+        typer.Option("--one-shot", help="Run a single iteration and exit instead of looping."),
+    ] = False,
+) -> None:
+    """Generate the Kindle dashboard on the configured interval (or once with ``--one-shot``).
+
+    Each run gathers weather + subway data, renders the image via OpenRouter, post-processes
+    it for the Kindle, and writes it to the dashboard.path in your config.
+    """
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"
+    )
+    cfg = _config(ctx)
+    if one_shot:
+        pipeline.run_once(cfg)
+    else:
+        pipeline.run(cfg)
 
 
 @app.command()
@@ -142,19 +147,9 @@ def mta_list_stations() -> None:
 def dashboard_preview_prompt(ctx: typer.Context) -> None:
     """Fetch live data and print the OpenRouter prompt without generating an image (debug)."""
     cfg = _config(ctx)
-    data = _gather(cfg)
+    data = pipeline.gather(cfg)
     client = OpenRouterClient(cfg.openrouter.model)
-    aspect = client.resolve_aspect_ratio(
-        cfg.dashboard.width, cfg.dashboard.height, cfg.dashboard.aspect_ratio
-    )
-    prompt = render_prompt(
-        data,
-        units=cfg.weather.units,
-        width=cfg.dashboard.width,
-        height=cfg.dashboard.height,
-        aspect=aspect,
-        template=cfg.openrouter.prompt_template,
-    )
+    prompt, _ = pipeline.build_prompt(cfg, data, client)
     typer.echo(prompt)
 
 
@@ -170,19 +165,9 @@ def dashboard_render(
     Writes the raw generated image; run ``dashboard post-process`` to massage it for the Kindle.
     """
     cfg = _config(ctx)
-    data = _gather(cfg)
+    data = pipeline.gather(cfg)
     client = OpenRouterClient(cfg.openrouter.model, cfg.openrouter.api_key.resolve())
-    aspect = client.resolve_aspect_ratio(
-        cfg.dashboard.width, cfg.dashboard.height, cfg.dashboard.aspect_ratio
-    )
-    prompt = render_prompt(
-        data,
-        units=cfg.weather.units,
-        width=cfg.dashboard.width,
-        height=cfg.dashboard.height,
-        aspect=aspect,
-        template=cfg.openrouter.prompt_template,
-    )
+    prompt, aspect = pipeline.build_prompt(cfg, data, client)
     png = client.generate(prompt, aspect_ratio=aspect, resolution=cfg.dashboard.resolution)
 
     path = output_file or cfg.dashboard.path

@@ -133,6 +133,6 @@ class Config(BaseModel):
 
 def load_config(path: Path) -> Config:
     """Load and validate the TOML config at ``path``."""
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         data = tomllib.load(f)
     return Config.model_validate(data)

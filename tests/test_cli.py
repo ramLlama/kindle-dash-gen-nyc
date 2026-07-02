@@ -106,6 +106,41 @@ def test_dashboard_post_process_writes_kindle_ready_image(tmp_path) -> None:
     assert out.mode == "L"
 
 
+def _patch_pipeline_entrypoints(monkeypatch) -> dict[str, int]:
+    """Replace the pipeline one-shot/loop entrypoints with counters; return the call tally."""
+    called = {"once": 0, "loop": 0}
+
+    def _once(cfg) -> None:
+        called["once"] += 1
+
+    def _loop(cfg) -> None:
+        called["loop"] += 1
+
+    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.run_once", _once)
+    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.run", _loop)
+    return called
+
+
+def test_run_one_shot_invokes_single_iteration(tmp_path, monkeypatch) -> None:
+    called = _patch_pipeline_entrypoints(monkeypatch)
+    config_path = _write_config(tmp_path)
+
+    result = runner.invoke(app, ["--config", str(config_path), "run", "--one-shot"])
+
+    assert result.exit_code == 0, result.output
+    assert called == {"once": 1, "loop": 0}  # single iteration, no loop
+
+
+def test_run_without_flag_starts_loop(tmp_path, monkeypatch) -> None:
+    called = _patch_pipeline_entrypoints(monkeypatch)
+    config_path = _write_config(tmp_path)
+
+    result = runner.invoke(app, ["--config", str(config_path), "run"])
+
+    assert result.exit_code == 0, result.output
+    assert called == {"once": 0, "loop": 1}  # entered the loop, not a one-shot
+
+
 def test_dashboard_preview_prompt_prints_without_generating(tmp_path, monkeypatch) -> None:
     _patch_clients(monkeypatch)
 

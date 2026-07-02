@@ -34,16 +34,23 @@ uv run python -m kindle_dash_gen_nyc version
 uv run python -m kindle_dash_gen_nyc --config config.toml dashboard preview-prompt  # debug, no spend
 uv run python -m kindle_dash_gen_nyc --config config.toml dashboard render out/raw.png
 uv run python -m kindle_dash_gen_nyc --config config.toml dashboard post-process out/raw.png out/dashboard.png
-uv run python -m kindle_dash_gen_nyc generate --config config.toml   # one-shot (M5)
-uv run python -m kindle_dash_gen_nyc run --config config.toml        # loop every interval (M5)
+uv run python -m kindle_dash_gen_nyc --config config.toml run --one-shot   # generate once and exit
+uv run python -m kindle_dash_gen_nyc --config config.toml run              # loop every interval
 ```
 
-`dashboard preview-prompt` fetches live weather/subway data and prints the prompt that would be
-sent to the image model, without calling it (no spend). `dashboard render [output_file]` does
-the same, then generates the image and writes the raw result to `output_file` (or
-`[dashboard].path` from the config). `dashboard post-process INPUT OUTPUT` massages an existing
-PNG into a Kindle-ready frame: grayscale, fitted to `width`×`height` via `post_process_method`
-(`resize`/`crop`/`pad`), and quantized to `gray_levels`. M5's pipeline will chain the two.
+`run` is the full pipeline: it gathers weather + subway data, renders the image via
+OpenRouter, post-processes it for the Kindle, and writes the result to `[dashboard].path`.
+Without a flag it loops every `[schedule].interval_minutes` (Ctrl-C exits cleanly, and a failed
+iteration is logged and retried at the next interval); `--one-shot` runs a single iteration and
+exits. Each source is isolated — if weather or subway is unavailable, that panel is dropped and
+the render still proceeds.
+
+The `dashboard` subcommands expose the individual pipeline steps for debugging. `dashboard
+preview-prompt` fetches live data and prints the prompt without calling the image model (no
+spend). `dashboard render [output_file]` generates and writes the raw, un-post-processed image
+(to `output_file` or `[dashboard].path`). `dashboard post-process INPUT OUTPUT` massages an
+existing PNG into a Kindle-ready frame: grayscale, fitted to `width`×`height` via
+`post_process_method` (`resize`/`crop`/`pad`), and quantized to `gray_levels`.
 
 ## Configuration
 
