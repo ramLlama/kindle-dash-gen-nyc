@@ -7,7 +7,9 @@ longitude = -73.9857
 
 [weather]
 user_agent = "kindle-dash-gen-nyc (you@example.com)"   # NWS requires a User-Agent
-units = "us"                                            # "us" or "si"
+units = "us"           # display units: "us" (°F), "si" (°C), or "both"
+rollover_hour = 20     # after this local hour, high/low show the next day
+hourly_hours = 4       # number of upcoming hourly forecasts to include
 
 # One [[stations]] block per station board you want on the dashboard.
 [[stations]]

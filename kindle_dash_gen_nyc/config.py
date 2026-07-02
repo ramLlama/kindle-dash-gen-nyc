@@ -59,7 +59,9 @@ class Weather(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user_agent: str
-    units: Literal["us", "si"] = "us"
+    units: Literal["us", "si", "both"] = "us"  # display units; data is always SI internally
+    rollover_hour: int = 20  # after this local hour, high/low show the next day
+    hourly_hours: int = 4  # number of upcoming hourly forecasts to include
 
 
 class Station(BaseModel):
