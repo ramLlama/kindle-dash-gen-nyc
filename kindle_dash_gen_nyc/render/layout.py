@@ -225,7 +225,7 @@ class _Glanceable:
             x0, x1 = _MARGIN + cell_w * i + 18, _MARGIN + cell_w * (i + 1) - 18
             self.d.line((x0, y + 48, x1, y + 48), fill=_INK, width=2)
             temp = format_apparent(h.temperature, self.units)
-            self.d.text((cx, y + 60), temp, font=self._fit_width(temp, "Bold", 46, cell_w - 20),
+            self.d.text((cx, y + 60), temp, font=self._fit_width(temp, "Medium", 46, cell_w - 20),
                         fill=_INK, anchor="ma")
             # raindrop + precipitation percentage as one group, centered under the cell
             pct = f"{h.precip_probability}%" if h.precip_probability is not None else "—"
