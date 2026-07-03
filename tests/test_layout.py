@@ -22,7 +22,7 @@ from kindle_dash_gen_nyc.models import (
     TrainArrival,
     WeatherReport,
 )
-from kindle_dash_gen_nyc.render.layout import LayoutError, render
+from kindle_dash_gen_nyc.render.layout import LayoutError, _resolve_face, render
 
 NOW = datetime(2026, 7, 2, 20, 30, 0)
 W, H = 1072, 1448
@@ -132,3 +132,10 @@ def test_unresolvable_font_raises() -> None:
     with pytest.raises(LayoutError):
         render(_dashboard(), units="us", width=W, height=H, layout="glanceable",
                font="No Such Font Family 9000")
+
+
+def test_resolve_face_differentiates_weights() -> None:
+    # Distinct weights must resolve to distinct faces (font file or variable-font instance index),
+    # so headings actually render heavier than body text.
+    faces = {_resolve_face("Adwaita Sans", w) for w in ("Regular", "Bold", "Black")}
+    assert len(faces) == 3

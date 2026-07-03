@@ -21,7 +21,17 @@ from ..models import DashboardData, Direction, TrainArrival, WeatherReport
 _MARGIN = 44
 _INK, _PAPER = 0, 255
 _ICON_DIR = "assets/icons"
-# Our weight names -> the fontconfig weight token used to resolve a face.
+# Our weight names -> candidate fontconfig style names (tried first, in order), then a fontconfig
+# weight token (fallback). Style matching is robust to fonts whose OS/2 weight metadata is unusable
+# (e.g. every face reporting the same weight); the weight fallback covers families that only expose
+# weights, and picks the nearest available weight when a named style is absent.
+_WEIGHT_STYLES = {
+    "Regular": ("Regular", "Book"),
+    "Medium": ("Medium",),
+    "SemiBold": ("SemiBold", "Semibold", "DemiBold"),
+    "Bold": ("Bold",),
+    "Black": ("Black", "Heavy"),
+}
 _WEIGHT_TOKENS = {
     "Regular": "regular",
     "Medium": "medium",
@@ -53,31 +63,59 @@ class _Fonts:
         return self._cache[key]
 
 
-def _resolve_face(family: str, weight: str) -> tuple[str, int]:
-    """Resolve ``(family, weight)`` to a ``(font file, face index)`` via fontconfig's ``fc-match``.
+def _norm(text: str) -> str:
+    """Normalize a family/style token for comparison (case- and space-insensitive)."""
+    return text.lower().replace(" ", "")
 
-    The index selects the weight's named instance for variable fonts (and the plain face
-    otherwise), so this works whether the family ships as one variable file or per-weight files.
-    Because ``fc-match`` always returns a best match, a missing/misspelled ``family`` would silently
-    substitute the system default; we verify the resolved family and fail fast instead.
+
+def _fc_match(pattern: str) -> tuple[str, str, str, int] | None:
+    """Run ``fc-match`` on a fontconfig ``pattern``; return (family, style, file, index) or None.
+
+    None means fc-match produced no usable line. A missing ``fc-match`` binary is fatal.
     """
-    query = f"{family}:weight={_WEIGHT_TOKENS[weight]}"
     try:
         result = subprocess.run(
-            ["fc-match", "-f", "%{family}\t%{file}\t%{index}", query],
+            ["fc-match", "-f", "%{family}\t%{style}\t%{file}\t%{index}", pattern],
             capture_output=True,
             text=True,
         )
     except FileNotFoundError as exc:
-        raise LayoutError(f"fontconfig 'fc-match' is required to resolve font {family!r}") from exc
-    if result.returncode != 0 or len(result.stdout) == 0:
-        raise LayoutError(f"could not resolve font {family!r}: {result.stderr.strip()}")
-    resolved_family, _, rest = result.stdout.partition("\t")
-    if family.lower() not in resolved_family.lower():
+        raise LayoutError("fontconfig 'fc-match' is required to resolve fonts") from exc
+    parts = result.stdout.rstrip("\n").split("\t")
+    if result.returncode != 0 or len(parts) != 4:
+        return None
+    family, style, path, index = parts
+    return family, style, path, int(index)
+
+
+def _resolve_face(family: str, weight: str) -> tuple[str, int]:
+    """Resolve ``(family, weight)`` to a ``(font file, face index)`` via fontconfig's ``fc-match``.
+
+    Prefers an exact **style-name** match (e.g. "Semibold", "Heavy") because some fonts carry
+    unusable weight metadata; falls back to fontconfig **weight** matching for families that only
+    expose weights (or to select the nearest weight when the style is absent). The index selects a
+    variable font's named instance, so both paths work for variable and per-weight-file families.
+    Because fc-match always returns a best match, a missing/misspelled ``family`` would silently
+    substitute another font; we verify the resolved family and fail fast instead.
+    """
+    # 1. Exact style-name match, robust to fonts whose weight metadata collapses every face.
+    for style in _WEIGHT_STYLES[weight]:
+        match = _fc_match(f"{family}:style={style}")
+        if match is None:
+            continue
+        got_family, got_style, path, index = match
+        got_styles = {_norm(s) for s in got_style.split(",")}
+        if _norm(family) in _norm(got_family) and _norm(style) in got_styles:
+            return path, index
+    # 2. Fall back to weight matching; this is also where a substituted (missing) family fails fast.
+    match = _fc_match(f"{family}:weight={_WEIGHT_TOKENS[weight]}")
+    if match is None:
+        raise LayoutError(f"could not resolve font {family!r} via fontconfig")
+    got_family, _got_style, path, index = match
+    if _norm(family) not in _norm(got_family):
         raise LayoutError(f"font {family!r} is not installed (fc-match substituted "
-                          f"{resolved_family!r}); install it or set dashboard.font")
-    path, _, index = rest.partition("\t")
-    return path, int(index)
+                          f"{got_family!r}); install it or set dashboard.font")
+    return path, index
 
 
 def _load_icon(name: str, size: int) -> tuple[Image.Image, Image.Image]:
