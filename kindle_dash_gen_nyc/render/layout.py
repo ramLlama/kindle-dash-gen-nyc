@@ -216,23 +216,31 @@ class _Glanceable:
         hours = weather.hourly[:4]
         if len(hours) == 0:
             return y
-        cell_w = (self.w - 2 * _MARGIN) / len(hours)
+        n = len(hours)
+        gap = 44  # gap between adjacent column dividers
+        # Columns partition the full content width (first starts at the left margin, last ends at
+        # the right margin); content is centered within each column, which stays equal width.
+        col_w = (self.w - 2 * _MARGIN - gap * (n - 1)) / n
         for i, h in enumerate(hours):
-            cx = _MARGIN + cell_w * (i + 0.5)
+            x0 = _MARGIN + i * (col_w + gap)
+            cx = x0 + col_w / 2
             self.d.text((cx, y), h.time.strftime("%-I%p").lower(),
                         font=self.fonts.get(34, "Medium"), fill=_INK, anchor="ma")
-            # short rule under the hour, splitting the strip into per-hour columns
-            x0, x1 = _MARGIN + cell_w * i + 18, _MARGIN + cell_w * (i + 1) - 18
-            self.d.line((x0, y + 48, x1, y + 48), fill=_INK, width=2)
+            self.d.line((x0, y + 48, x0 + col_w, y + 48), fill=_INK, width=2)
+            # sized a bit under the column width so the temperature keeps a margin inside the column
             temp = format_apparent(h.temperature, self.units)
-            self.d.text((cx, y + 60), temp, font=self._fit_width(temp, "Medium", 46, cell_w - 20),
+            self.d.text((cx, y + 60), temp, font=self._fit_width(temp, "Medium", 40, col_w - 20),
                         fill=_INK, anchor="ma")
-            # raindrop + precipitation percentage as one group, centered under the cell
+            # raindrop + precipitation percentage as one group, centered under the column
             pct = f"{h.precip_probability}%" if h.precip_probability is not None else "—"
             pf = self.fonts.get(34, "Regular")
             gx = cx - (24 + pf.getlength(pct)) / 2
-            self._raindrop(gx + 8, y + 134, 12)
-            self.d.text((gx + 24, y + 134), pct, font=pf, fill=_INK, anchor="lm")
+            pct_y = y + 134
+            self.d.text((gx + 24, pct_y), pct, font=pf, fill=_INK, anchor="lm")
+            # align the raindrop's mass with the percentage's ink center (its own centroid sits
+            # ~0.125*size above its cy, so nudge down to compensate)
+            _, ink_top, _, ink_bottom = pf.getbbox(pct, anchor="lm")
+            self._raindrop(gx + 8, pct_y + (ink_top + ink_bottom) / 2 + 1.5, 12)
         # extra whitespace between the precip row and the rule dividing hourly from subway
         bottom = y + 200
         self.d.line((_MARGIN, bottom, self.w - _MARGIN, bottom), fill=_INK, width=3)
