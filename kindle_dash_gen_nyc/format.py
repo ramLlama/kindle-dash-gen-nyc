@@ -7,9 +7,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .models import Temperature
+from .models import Temperature, WeatherReport
 
 _KMH_TO_MPH = 0.621371
+
+# Condition-text keywords mapped to the icon category the dashboard draws, in priority order:
+# the first category whose keywords match the observed/forecast text wins (snow over rain, etc.).
+_ICON_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("snow", ("snow", "flurr", "sleet", "wintry", "ice", "blizzard")),
+    ("rain", ("rain", "shower", "storm", "thunder", "drizzle")),
+    ("cloudy", ("cloud", "overcast", "fog", "haze", "mist")),
+)
 
 
 def format_eta(arrival: datetime, now: datetime) -> str:
@@ -52,12 +60,29 @@ def format_apparent(temp: Temperature | None, units: str) -> str:
     return format_temp(value, units)
 
 
+def weather_icon(report: WeatherReport) -> str:
+    """Classify current conditions into one of four dashboard icons.
+
+    Returns ``"snow"``, ``"rain"``, ``"cloudy"``, or ``"sunny"`` (the default). The ``raining``
+    observation forces ``"rain"`` unless the condition text says snow; otherwise the icon is
+    chosen from the observed (falling back to forecast) condition text by keyword.
+    """
+    text = (report.observed_conditions or report.conditions or "").lower()
+    for icon, keywords in _ICON_KEYWORDS:
+        if any(word in text for word in keywords):
+            return icon
+    # No keyword matched: trust a bare "raining" observation before defaulting to sunny.
+    if report.raining is True:
+        return "rain"
+    return "sunny"
+
+
 def format_wind(kmh: float | None, direction: str, units: str) -> str:
-    """Format a km/h wind speed and direction per display ``units``."""
+    """Format a wind speed (input km/h) and direction per display ``units`` (shows "mph"/"kmh")."""
     if kmh is None:
         return "—"
     mph = round(kmh * _KMH_TO_MPH)
-    metric = f"{round(kmh)} km/h"
+    metric = f"{round(kmh)} kmh"
     if units == "si":
         speed = metric
     elif units == "both":

@@ -32,6 +32,7 @@ model = "google/gemini-3.1-flash-lite-image"
 api_key = { value = "sk-or-test" }
 
 [dashboard]
+backend = "llm"
 path = "./out/dashboard.png"
 width = 100
 height = 140
@@ -73,8 +74,10 @@ class _FakeOpenRouterClient:
 
 
 def _patch_clients(monkeypatch) -> None:
-    monkeypatch.setattr("kindle_dash_gen_nyc.cli.NwsClient", _FakeNwsClient)
-    monkeypatch.setattr("kindle_dash_gen_nyc.cli.MtaClient", _FakeMtaClient)
+    # gather() and the llm render run in pipeline; preview-prompt builds its client in cli.
+    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.NwsClient", _FakeNwsClient)
+    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.MtaClient", _FakeMtaClient)
+    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.OpenRouterClient", _FakeOpenRouterClient)
     monkeypatch.setattr("kindle_dash_gen_nyc.cli.OpenRouterClient", _FakeOpenRouterClient)
 
 

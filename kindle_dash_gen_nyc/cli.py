@@ -26,7 +26,7 @@ app = typer.Typer(
 )
 mta_app = typer.Typer(help="Real-time subway arrivals and station lookup.", no_args_is_help=True)
 app.add_typer(mta_app, name="mta")
-dashboard_app = typer.Typer(help="Render the dashboard image via OpenRouter.", no_args_is_help=True)
+dashboard_app = typer.Typer(help="Render the dashboard image.", no_args_is_help=True)
 app.add_typer(dashboard_app, name="dashboard")
 
 ConfigOption = Annotated[
@@ -147,6 +147,8 @@ def mta_list_stations() -> None:
 def dashboard_preview_prompt(ctx: typer.Context) -> None:
     """Fetch live data and print the OpenRouter prompt without generating an image (debug)."""
     cfg = _config(ctx)
+    if cfg.openrouter is None:
+        raise typer.BadParameter("preview-prompt applies only to the 'llm' backend ([openrouter])")
     data = pipeline.gather(cfg)
     client = OpenRouterClient(cfg.openrouter.model)
     prompt, _ = pipeline.build_prompt(cfg, data, client)
@@ -160,15 +162,14 @@ def dashboard_render(
         Path | None, typer.Argument(help="Where to write the PNG (defaults to dashboard.path).")
     ] = None,
 ) -> None:
-    """Fetch live data, render the prompt, and generate the dashboard PNG via OpenRouter.
+    """Fetch live data and render the dashboard PNG via the configured backend.
 
-    Writes the raw generated image; run ``dashboard post-process`` to massage it for the Kindle.
+    Writes the raw rendered image (before Kindle post-processing); run ``dashboard post-process``
+    to massage it for the device.
     """
     cfg = _config(ctx)
     data = pipeline.gather(cfg)
-    client = OpenRouterClient(cfg.openrouter.model, cfg.openrouter.api_key.resolve())
-    prompt, aspect = pipeline.build_prompt(cfg, data, client)
-    png = client.generate(prompt, aspect_ratio=aspect, resolution=cfg.dashboard.resolution)
+    png = pipeline.render_raw(cfg, data)
 
     path = output_file or cfg.dashboard.path
     path.parent.mkdir(parents=True, exist_ok=True)

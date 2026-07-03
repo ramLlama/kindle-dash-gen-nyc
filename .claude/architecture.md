@@ -14,14 +14,17 @@ run() loop  ──every interval_minutes──▶  run_once(cfg)
                        all sources empty? ──▶ skip render, return None
                                              │
                                     render(cfg, data):
-                                       build_prompt(cfg, data, client)
-                                          ├ client.resolve_aspect_ratio(w, h, override)
-                                          └ render_prompt(...)  ──▶ prompt str
-                                       client.generate(prompt, aspect, resolution) ──▶ raw PNG
+                                       render_raw(cfg, data) ──▶ raw PNG   # dispatch on backend
+                                          ├ pillow: layout.render(data, ...)
+                                          └ llm:    build_prompt(...) + client.generate(...)
                                        post_process(raw, w, h, gray_levels, method) ──▶ PNG
                                              │
                                     _atomic_write(dashboard.path, png)
 ```
+
+`render_raw()` dispatches on `dashboard.backend`. The **pillow** backend (`_render_pillow`) draws
+locally; the **llm** backend (`_render_llm`) resolves the aspect ratio, renders the Jinja2 prompt,
+and calls the image model. Both return raw PNG bytes and share `post_process()`.
 
 - **`gather()`** constructs `NwsClient` and `MtaClient`, fetches from each inside its own
   try/except, and logs a degradation on `WeatherError` / `MtaError`. Returns `DashboardData`
@@ -76,7 +79,21 @@ All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
 ## Render
 
-### Prompt (render/prompt.py)
+Two backends produce raw PNG bytes from `DashboardData`, selected by `dashboard.backend`
+(`"pillow"` default, `"llm"` opt-in). `post_process()` is shared by both.
+
+### Layout — pillow backend (render/layout.py)
+
+`render(data, *, units, width, height, layout, font)` draws the dashboard deterministically with
+Pillow at the exact panel size and returns PNG bytes. `_LAYOUTS` maps a name (`"glanceable"`) to a
+renderer class. Fonts are resolved from a system family name via fontconfig (`fc-match` → file +
+face index, so variable-font weights load), and verified against the requested family so a missing
+font fails fast rather than silently substituting. Weather icons are bundled `assets/icons/*.png`,
+pasted with their alpha as a mask; the icon is chosen by `format.weather_icon()`. Unknown layout,
+unresolvable font, or missing icon raise `LayoutError`. This backend is free, offline, exact, and
+never garbles the data (unlike an image model).
+
+### Prompt — llm backend (render/prompt.py)
 
 `render_prompt(data, *, units, width, height, aspect, template)` resolves the template (a
 bundled name under `assets/dashboard_prompts/*.j2`, else a filesystem path) and renders it.

@@ -101,11 +101,19 @@ class OpenRouter(BaseModel):
 #   pad    -- scale to fit, add white e-ink bars (nothing cropped or distorted)
 PostProcessMethod = Literal["resize", "crop", "pad"]
 
+# Which rendering backend draws the dashboard:
+#   pillow -- deterministic local layout (free, offline, exact); see render/layout.py
+#   llm    -- an OpenRouter image model renders from a prompt; needs the [openrouter] section
+RenderBackend = Literal["pillow", "llm"]
+
 
 class Dashboard(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: Path
+    backend: RenderBackend = "pillow"
+    layout: str = "glanceable"  # pillow backend: named layout in render/layout.py
+    font: str = "Adwaita Sans"  # pillow backend: system font family (resolved via fontconfig)
     width: int = 1072  # Kindle Voyage, portrait (native orientation)
     height: int = 1448
     gray_levels: int = 16
@@ -126,9 +134,15 @@ class Config(BaseModel):
     location: Location
     weather: Weather
     stations: dict[str, Station]  # display name -> station board
-    openrouter: OpenRouter
+    openrouter: OpenRouter | None = None  # required only when dashboard.backend == "llm"
     dashboard: Dashboard
     schedule: Schedule = Schedule()
+
+    @model_validator(mode="after")
+    def _backend_needs_openrouter(self) -> Config:
+        if self.dashboard.backend == "llm" and self.openrouter is None:
+            raise ValueError("dashboard.backend = 'llm' requires an [openrouter] section")
+        return self
 
 
 def load_config(path: Path) -> Config:

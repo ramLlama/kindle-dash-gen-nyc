@@ -62,6 +62,8 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     assert cfg.dashboard.width == 1072  # default (portrait)
     assert cfg.dashboard.gray_levels == 16  # default
     assert cfg.dashboard.post_process_method == "resize"  # default
+    assert cfg.dashboard.backend == "pillow"  # default backend
+    assert cfg.dashboard.layout == "glanceable"  # default pillow layout
     assert cfg.schedule.interval_minutes == 5
 
 
@@ -69,6 +71,27 @@ def test_load_config_defaults_schedule(tmp_path: Path) -> None:
     text = EXAMPLE.replace("\n[schedule]\ninterval_minutes = 5\n", "")
     cfg = load_config(_write(tmp_path, text))
     assert cfg.schedule.interval_minutes == 5
+
+
+def _without_openrouter(text: str) -> str:
+    return text.replace(
+        '[openrouter]\nmodel = "google/gemini-3.1-flash-lite-image"\n'
+        'api_key = { value = "sk-or-test" }\n',
+        "",
+    )
+
+
+def test_pillow_backend_needs_no_openrouter(tmp_path: Path) -> None:
+    # The default (pillow) backend needs no [openrouter] section.
+    cfg = load_config(_write(tmp_path, _without_openrouter(EXAMPLE)))
+    assert cfg.openrouter is None
+    assert cfg.dashboard.backend == "pillow"
+
+
+def test_llm_backend_requires_openrouter(tmp_path: Path) -> None:
+    text = _without_openrouter(EXAMPLE).replace("[dashboard]\n", '[dashboard]\nbackend = "llm"\n')
+    with pytest.raises(ValidationError):
+        load_config(_write(tmp_path, text))
 
 
 def test_unknown_key_is_rejected(tmp_path: Path) -> None:

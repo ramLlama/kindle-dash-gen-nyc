@@ -3,10 +3,11 @@
 ## What This Project Does
 
 A Python CLI that periodically generates a Kindle e-ink dashboard image for NYC. It pulls the
-local NWS weather forecast plus real-time MTA subway arrivals, hands that data to an OpenRouter
-image model to render the whole dashboard, post-processes the resulting PNG for a Kindle Voyage
-(grayscale, exact pixel dimensions, 16 hardware gray levels), and writes it to a configured path
-for syncing to the device. Intended to run unattended on an interval (e.g. every 5 minutes).
+local NWS weather forecast plus real-time MTA subway arrivals, renders the whole dashboard via one
+of two backends (a deterministic local **pillow** layout, the default; or an **llm** OpenRouter
+image model), post-processes the resulting PNG for a Kindle Voyage (grayscale, exact pixel
+dimensions, 16 hardware gray levels), and writes it to a configured path for syncing to the
+device. Intended to run unattended on an interval (e.g. every 5 minutes).
 
 ## Tech Stack
 
@@ -16,8 +17,10 @@ for syncing to the device. Intended to run unattended on an interval (e.g. every
 - **pydantic** `2.*` — config validation (`extra="forbid"` on every model)
 - **niquests** `3.*` — HTTP client (NWS + OpenRouter); `niquests-mock` in tests
 - **nyct-gtfs** `2.*` — MTA GTFS-realtime feed parsing
-- **jinja2** `3.*` — prompt templating
-- **pillow** `12.*` — image post-processing
+- **jinja2** `3.*` — prompt templating (llm backend)
+- **pillow** `12.*` — image post-processing and the pillow rendering backend
+- **fontconfig** (`fc-match`, system tool) — the pillow backend resolves a font family name to a
+  file; required at runtime when `backend = "pillow"`
 - **pytest** `9.*`, **ruff** `0.15.*` — test + lint gates
 
 ## Repository Structure
@@ -36,12 +39,14 @@ kindle_dash_gen_nyc/
   sources/             # external data fetchers, each raising its own *Error
     weather.py         # NwsClient -> WeatherReport
     mta.py             # MtaClient -> list[StationBoard]
-  render/              # turn data into a Kindle-ready PNG
-    prompt.py          # render_prompt(): Jinja2, public template context contract
-    openrouter.py      # OpenRouterClient: Unified Image API, runtime capability discovery
-    postprocess.py     # post_process(): grayscale, fit, quantize (Pillow)
+  render/              # turn data into a Kindle-ready PNG (two backends)
+    prompt.py          # llm backend: render_prompt() Jinja2, public template context contract
+    openrouter.py      # llm backend: OpenRouterClient, Unified Image API, capability discovery
+    layout.py          # pillow backend: named layouts draw DashboardData directly (fontconfig)
+    postprocess.py     # post_process(): grayscale, fit, quantize (Pillow) — shared by both
   assets/
-    dashboard_prompts/dense.j2   # bundled prompt template ("dense" layout)
+    dashboard_prompts/*.j2       # bundled prompt templates ("dense", "glanceable") — llm backend
+    icons/{sunny,cloudy,rain,snow}.png  # weather icons for the pillow backend
     mta/stations.csv             # bundled station lookup (for `mta list-stations`)
 tests/                 # pytest, one file per module; HTTP mocked with niquests-mock
 config.example.toml    # copy to config.toml (gitignored) and edit
@@ -62,10 +67,13 @@ config.example.toml    # copy to config.toml (gitignored) and edit
 ## Architecture Overview
 
 Linear pipeline, wired in `pipeline.py`:
-`gather()` (fetch weather + subway, isolating each source) → `build_prompt()` (resolve the
-model's aspect ratio, render the Jinja2 prompt) → `OpenRouterClient.generate()` (image model
-returns raw PNG bytes) → `post_process()` (grayscale, fit, quantize) → atomic write to
-`dashboard.path`. The `dashboard` CLI subcommands expose each step in isolation for debugging.
+`gather()` (fetch weather + subway, isolating each source) → `render_raw()` (dispatch on
+`dashboard.backend`) → `post_process()` (grayscale, fit, quantize) → atomic write to
+`dashboard.path`. `render_raw()` branches: the **pillow** backend calls `layout.render()` (draws
+`DashboardData` at native size); the **llm** backend does `build_prompt()` →
+`OpenRouterClient.generate()`. Both return raw PNG bytes, and `post_process()` is shared (for
+pillow the fit step is a no-op since it's already exact-sized, so only quantization applies). The
+`dashboard` CLI subcommands expose each step in isolation for debugging.
 
 See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, MTA feed
 deduplication, and the OpenRouter capability-discovery details.
@@ -98,6 +106,11 @@ subcommand loads it on demand via `_config(ctx)`.
 - **Secrets never come from environment variables.** The OpenRouter API key is a `Secret`:
   either an inline `{ value = "..." }` or `{ value_from_cmd = "..." }` whose stdout is the key.
   This is a deliberate design choice, not an oversight — do not add env-var fallbacks.
+- **Two render backends.** `dashboard.backend` selects `"pillow"` (default: deterministic local
+  layout in `render/layout.py`; free, offline, exact — never garbles data) or `"llm"` (OpenRouter
+  image model). `[openrouter]` is optional and only required for the llm backend (a `Config`
+  validator enforces this). The pillow backend resolves its `font` family via fontconfig
+  (`fc-match`) and pastes bundled `assets/icons/*.png`; a missing font/icon raises `LayoutError`.
 - **Per-source isolation.** In `gather()`, a `WeatherError` drops the weather panel and an
   `MtaError` drops the arrival boards; the render proceeds with whatever remains. Only these
   typed errors are swallowed. If *both* sources are empty, `run_once()` skips the render
@@ -114,8 +127,8 @@ subcommand loads it on demand via `_config(ctx)`.
   unsupported `aspect_ratio`/`resolution` override fails fast with the valid values listed.
 - **Config is strict.** Every pydantic model sets `extra="forbid"`; an unknown TOML key is a
   validation error, not silently ignored.
-- **Milestone-per-commit.** History is built as discrete milestones (M1..M5 so far), one
-  feature/refactor per commit, Conventional Commits style.
+- **Milestone-per-commit.** History is built as discrete milestones (M1..M6 so far; M6 = the
+  pillow rendering backend), one feature/refactor per commit, Conventional Commits style.
 
 ## Context Files
 

@@ -1,13 +1,41 @@
 """Tests for display formatting helpers."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
-from kindle_dash_gen_nyc.format import format_eta, format_reading, format_temp, format_wind
-from kindle_dash_gen_nyc.models import Temperature
+from kindle_dash_gen_nyc.format import (
+    format_eta,
+    format_reading,
+    format_temp,
+    format_wind,
+    weather_icon,
+)
+from kindle_dash_gen_nyc.models import Temperature, WeatherReport
 
 _NOW = datetime(2026, 7, 1, 12, 0, 0)
+
+
+def _report(*, conditions: str, observed: str | None, raining: bool | None) -> WeatherReport:
+    """Minimal WeatherReport carrying only the fields weather_icon reads."""
+    return WeatherReport(
+        temperature=Temperature(20.0, None),
+        conditions=conditions,
+        humidity=None,
+        dewpoint=None,
+        wind_speed_kmh=None,
+        wind_direction="",
+        precip_probability=None,
+        raining=raining,
+        observed_conditions=observed,
+        high=None,
+        low=None,
+        high_low_date=date(2026, 7, 1),
+        forecast="",
+        forecast_name="",
+        hourly=[],
+        as_of=_NOW,
+    )
 
 
 @pytest.mark.parametrize(
@@ -27,10 +55,10 @@ def test_format_temp(celsius, units, expected) -> None:
 @pytest.mark.parametrize(
     "kmh,direction,units,expected",
     [
-        (16, "SW", "us", "10 mph SW"),  # 16 km/h ~= 10 mph
-        (16, "SW", "si", "16 km/h SW"),
-        (16, "SW", "both", "10 mph / 16 km/h SW"),
-        (10, "", "si", "10 km/h"),  # no direction -> no trailing space
+        (16, "SW", "us", "10 mph SW"),  # 16 kmh ~= 10 mph
+        (16, "SW", "si", "16 kmh SW"),
+        (16, "SW", "both", "10 mph / 16 kmh SW"),
+        (10, "", "si", "10 kmh"),  # no direction -> no trailing space
         (None, "SW", "us", "—"),
     ],
 )
@@ -57,3 +85,19 @@ def test_format_reading(temp, units, expected) -> None:
 )
 def test_format_eta(delta_minutes: float, expected: str) -> None:
     assert format_eta(_NOW + timedelta(minutes=delta_minutes), _NOW) == expected
+
+
+@pytest.mark.parametrize(
+    "conditions,observed,raining,expected",
+    [
+        ("Clear", None, False, "sunny"),  # default, no keyword
+        ("Mostly Cloudy", None, False, "cloudy"),
+        ("Light Rain", "Rain", True, "rain"),
+        ("Snow Showers", None, False, "snow"),  # snow beats the "showers" rain keyword
+        ("Clear", None, True, "rain"),  # raining observation overrides a keyword-less default
+        ("Sunny", "Patchy Fog", False, "cloudy"),  # observed text wins over forecast
+    ],
+)
+def test_weather_icon(conditions, observed, raining, expected) -> None:
+    report = _report(conditions=conditions, observed=observed, raining=raining)
+    assert weather_icon(report) == expected

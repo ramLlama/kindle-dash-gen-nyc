@@ -49,6 +49,8 @@ max_arrivals = 3
   stop_id = "D19"
   direction = "both"
 
+# [openrouter] is only needed when dashboard.backend = "llm" (below). The default pillow backend
+# draws the dashboard locally and needs no API key, so you can delete this whole section.
 [openrouter]
 model = "google/gemini-3.1-flash-lite-image"
 # Provide the API key either inline or via a command that prints it:
@@ -64,20 +66,28 @@ prompt_template = "dense"  # bundled template name, or a filesystem path to your
 # Plus display-formatting helpers as globals:
 #   format_reading(temp, units)   format_apparent(temp, units)   format_temp(celsius, units)
 #   format_wind(kmh, direction, units)      format_eta(arrival, now)
+#   weather_icon(report) -> "sunny" | "cloudy" | "rain" | "snow"
 # See kindle_dash_gen_nyc/render/prompt.py and assets/dashboard_prompts/dense.j2 for details.
 
 [dashboard]
 path = "./out/dashboard.png"
+# Rendering backend:
+#   "pillow" -- draw the dashboard locally (free, offline, exact); no [openrouter] needed
+#   "llm"    -- an OpenRouter image model renders from a prompt (requires [openrouter])
+backend = "pillow"
+layout = "glanceable"      # pillow backend: bundled layout name (see render/layout.py)
+font = "Adwaita Sans"      # pillow backend: system font family, resolved via fontconfig
 width = 1072               # Kindle Voyage, portrait (native orientation)
 height = 1448
 gray_levels = 16           # Voyage 4-bit grayscale
-# How the generated image is fitted to width x height:
+# How the rendered image is fitted to width x height (mainly for the llm backend; the pillow
+# backend already draws at the exact size, so only the gray-level quantization applies):
 #   "resize" -- stretch to fill, ignoring aspect (minor distortion)
 #   "crop"   -- scale to cover, center-crop the excess (no distortion, trims a sliver)
 #   "pad"    -- scale to fit, add white e-ink bars (nothing cropped or distorted)
 post_process_method = "resize"
-# aspect_ratio = "3:4"      # override the model's nearest-match aspect ratio; must be one it supports
-# resolution = "1K"         # override the model's default resolution; must be one it supports
+# aspect_ratio = "3:4"      # llm backend: override the model's nearest-match aspect ratio
+# resolution = "1K"         # llm backend: override the model's default resolution
 
 [schedule]
 interval_minutes = 5

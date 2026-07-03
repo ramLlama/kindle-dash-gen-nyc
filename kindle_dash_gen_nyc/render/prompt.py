@@ -16,7 +16,8 @@ display formatting has one source of truth):
     ``format_reading(temp, units)`` (real, with feels-like in brackets),
     ``format_apparent(temp, units)`` (feels-like only, falling back to real),
     ``format_temp(celsius, units)``, ``format_wind(kmh, direction, units)``,
-    ``format_eta(arrival, now)``
+    ``format_eta(arrival, now)``,
+    ``weather_icon(report)`` (one of ``"sunny"``/``"cloudy"``/``"rain"``/``"snow"``).
 """
 
 from __future__ import annotations
@@ -26,7 +27,14 @@ from pathlib import Path
 
 from jinja2 import Environment
 
-from ..format import format_apparent, format_eta, format_reading, format_temp, format_wind
+from ..format import (
+    format_apparent,
+    format_eta,
+    format_reading,
+    format_temp,
+    format_wind,
+    weather_icon,
+)
 from ..models import DashboardData
 
 _TEMPLATE_DIR = "assets/dashboard_prompts"
@@ -39,6 +47,7 @@ _ENV.globals.update(
     format_temp=format_temp,
     format_wind=format_wind,
     format_eta=format_eta,
+    weather_icon=weather_icon,
 )
 
 

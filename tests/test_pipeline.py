@@ -178,8 +178,10 @@ def test_run_once_propagates_unhandled_error(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(pipeline, "OpenRouterClient", _BoomClient)
 
+    cfg = _config(tmp_path)
+    cfg.dashboard.backend = "llm"  # exercise the llm render path so the boom client is reached
     with pytest.raises(RuntimeError):
-        pipeline.run_once(_config(tmp_path))
+        pipeline.run_once(cfg)
 
 
 def test_run_once_skips_render_when_all_sources_down(tmp_path, monkeypatch) -> None:
