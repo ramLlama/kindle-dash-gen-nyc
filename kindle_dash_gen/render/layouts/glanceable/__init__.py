@@ -2,7 +2,7 @@
 
 Hero weather, an hourly strip, and per-station arrival boards. This ships with the app but is
 structurally identical to a private plugin: it depends only on the public
-:mod:`kindle_dash_gen_nyc.render.toolkit` surface, owns its own assets, and registers itself via
+:mod:`kindle_dash_gen.render.toolkit` surface, owns its own assets, and registers itself via
 :func:`register_layout` at import. It could be dropped verbatim into a private plugins directory.
 """
 
@@ -12,9 +12,9 @@ from datetime import datetime
 
 from PIL import Image, ImageDraw
 
-from kindle_dash_gen_nyc.models import DashboardData, Direction, TrainArrival, WeatherReport
-from kindle_dash_gen_nyc.render.layout import register_layout
-from kindle_dash_gen_nyc.render.toolkit import (
+from kindle_dash_gen.models import DashboardData, Direction, TrainArrival, WeatherReport
+from kindle_dash_gen.render.layout import register_layout
+from kindle_dash_gen.render.toolkit import (
     DEFAULT_FONT,
     INK,
     PAPER,
@@ -26,7 +26,7 @@ from kindle_dash_gen_nyc.render.toolkit import (
     weather_icon,
 )
 
-_PACKAGE = "kindle_dash_gen_nyc.render.layouts.glanceable"  # this plugin's own package, for assets
+_PACKAGE = "kindle_dash_gen.render.layouts.glanceable"  # this plugin's own package, for assets
 _MARGIN = 44
 
 

@@ -4,14 +4,14 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from kindle_dash_gen_nyc.format import (
+from kindle_dash_gen.format import (
     format_eta,
     format_reading,
     format_temp,
     format_wind,
     weather_icon,
 )
-from kindle_dash_gen_nyc.models import Temperature, WeatherReport
+from kindle_dash_gen.models import Temperature, WeatherReport
 
 _NOW = datetime(2026, 7, 1, 12, 0, 0)
 

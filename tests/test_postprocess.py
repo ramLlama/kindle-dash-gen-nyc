@@ -7,7 +7,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from kindle_dash_gen_nyc.render.postprocess import post_process
+from kindle_dash_gen.render.postprocess import post_process
 
 
 def _gradient_png(width: int, height: int, vmax: int = 128) -> bytes:

@@ -11,7 +11,7 @@ Variables:
     aspect  -- resolved aspect ratio string, e.g. ``"4:3"``
     now     -- ``datetime``, equal to ``data.generated_at`` (for ETA formatting)
 
-Helper globals (the same :mod:`kindle_dash_gen_nyc.format` functions the debug CLIs use, so
+Helper globals (the same :mod:`kindle_dash_gen.format` functions the debug CLIs use, so
 display formatting has one source of truth):
     ``format_reading(temp, units)`` (real, with feels-like in brackets),
     ``format_apparent(temp, units)`` (feels-like only, falling back to real),
@@ -87,7 +87,7 @@ def _build_context(
 
 def _bundled_template_names() -> list[str]:
     """Stems of every bundled prompt template under ``assets/dashboard_prompts/*.j2``."""
-    directory = files("kindle_dash_gen_nyc").joinpath(_TEMPLATE_DIR)
+    directory = files("kindle_dash_gen").joinpath(_TEMPLATE_DIR)
     return sorted(
         entry.name.removesuffix(_TEMPLATE_SUFFIX)
         for entry in directory.iterdir()
@@ -97,7 +97,7 @@ def _bundled_template_names() -> list[str]:
 
 def _load_template_source(spec: str) -> str:
     """Resolve ``spec`` to template source: a bundled name first, else a filesystem path."""
-    bundled = files("kindle_dash_gen_nyc").joinpath(_TEMPLATE_DIR, f"{spec}{_TEMPLATE_SUFFIX}")
+    bundled = files("kindle_dash_gen").joinpath(_TEMPLATE_DIR, f"{spec}{_TEMPLATE_SUFFIX}")
     if bundled.is_file():
         return bundled.read_text()
     path = Path(spec)

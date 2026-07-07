@@ -8,8 +8,8 @@ from pathlib import Path
 from PIL import Image
 from typer.testing import CliRunner
 
-from kindle_dash_gen_nyc import pipeline
-from kindle_dash_gen_nyc.cli import app
+from kindle_dash_gen import pipeline
+from kindle_dash_gen.cli import app
 
 runner = CliRunner()
 
@@ -75,10 +75,10 @@ class _FakeOpenRouterClient:
 
 def _patch_clients(monkeypatch) -> None:
     # gather() and the llm render run in pipeline; preview-prompt builds its client in cli.
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.NwsClient", _FakeNwsClient)
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.MtaClient", _FakeMtaClient)
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.OpenRouterClient", _FakeOpenRouterClient)
-    monkeypatch.setattr("kindle_dash_gen_nyc.cli.OpenRouterClient", _FakeOpenRouterClient)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.NwsClient", _FakeNwsClient)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.MtaClient", _FakeMtaClient)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.OpenRouterClient", _FakeOpenRouterClient)
+    monkeypatch.setattr("kindle_dash_gen.cli.OpenRouterClient", _FakeOpenRouterClient)
 
 
 def test_dashboard_render_writes_generated_bytes_to_output_path(tmp_path, monkeypatch) -> None:
@@ -104,7 +104,7 @@ def test_dashboard_render_renders_all_dashboards_from_one_gather(tmp_path, monke
         return real_gather(cfg)
 
     _patch_clients(monkeypatch)
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.gather", _counting_gather)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.gather", _counting_gather)
 
     first_path = tmp_path / "out" / "first.png"
     second_path = tmp_path / "out" / "second.png"
@@ -171,8 +171,8 @@ def _patch_pipeline_entrypoints(monkeypatch) -> dict[str, int]:
     def _loop(cfg) -> None:
         called["loop"] += 1
 
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.run_once", _once)
-    monkeypatch.setattr("kindle_dash_gen_nyc.pipeline.run", _loop)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.run_once", _once)
+    monkeypatch.setattr("kindle_dash_gen.pipeline.run", _loop)
     return called
 
 
@@ -199,7 +199,7 @@ def test_run_without_flag_starts_loop(tmp_path, monkeypatch) -> None:
 def test_run_one_shot_exits_nonzero_when_a_dashboard_fails(tmp_path, monkeypatch) -> None:
     # A one-shot must fail loudly (non-zero) so cron/systemd sees a failed render.
     monkeypatch.setattr(
-        "kindle_dash_gen_nyc.pipeline.run_once",
+        "kindle_dash_gen.pipeline.run_once",
         lambda cfg: pipeline.RunResult(written=[], failed=["main"]),
     )
     config_path = _write_config(tmp_path)
@@ -212,7 +212,7 @@ def test_run_one_shot_exits_nonzero_when_a_dashboard_fails(tmp_path, monkeypatch
 def test_run_one_shot_exits_zero_when_all_sources_down(tmp_path, monkeypatch) -> None:
     # An empty result with no failures is a legitimate skip, not an error → exit 0.
     monkeypatch.setattr(
-        "kindle_dash_gen_nyc.pipeline.run_once",
+        "kindle_dash_gen.pipeline.run_once",
         lambda cfg: pipeline.RunResult(written=[], failed=[]),
     )
     config_path = _write_config(tmp_path)

@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from kindle_dash_gen_nyc.config import Platform, Station
-from kindle_dash_gen_nyc.models import Direction
-from kindle_dash_gen_nyc.sources.mta import MtaClient, MtaError
+from kindle_dash_gen.config import Platform, Station
+from kindle_dash_gen.models import Direction
+from kindle_dash_gen.sources.mta import MtaClient, MtaError
 
 NOW = datetime(2026, 7, 1, 12, 0, 0)
 

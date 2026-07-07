@@ -1,6 +1,6 @@
 """Public toolkit for building pillow render layouts (bundled or private plugins).
 
-A layout plugin draws :class:`~kindle_dash_gen_nyc.models.DashboardData` with Pillow at the
+A layout plugin draws :class:`~kindle_dash_gen.models.DashboardData` with Pillow at the
 device's native size. This module is the stable surface a plugin builds on: font resolution
 (:class:`Fonts`), the ink/paper constants, a shrink-to-fit helper (:func:`fit_font`), and an asset
 loader (:func:`load_asset_image`). Everything the bundled ``glanceable`` layout uses comes from

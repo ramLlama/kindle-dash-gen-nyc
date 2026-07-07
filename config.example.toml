@@ -1,4 +1,4 @@
-# Example configuration for kindle-dash-gen-nyc.
+# Example configuration for kindle-dash-gen.
 # Copy to config.toml and edit. config.toml is gitignored (it may hold secrets).
 
 # Optional: an absolute package directory of your own private render layouts (see docs/plugins.md).
@@ -10,7 +10,7 @@ latitude = 40.7484
 longitude = -73.9857
 
 [weather]
-user_agent = "kindle-dash-gen-nyc (you@example.com)"   # NWS requires a User-Agent
+user_agent = "kindle-dash-gen (you@example.com)"   # NWS requires a User-Agent
 units = "both"           # display units: "us" (°F), "si" (°C), or "both"
 rollover_hour = 20     # after this local hour, high/low show the next day
 hourly_hours = 4       # number of upcoming hourly forecasts to include
@@ -21,9 +21,9 @@ hourly_hours = 4       # number of upcoming hourly forecasts to include
 # platforms (e.g. the L vs the N/Q/R/W at Union Sq) are separate platform entries under one name.
 # Boards carry every upcoming arrival; how many to show is up to the layout (see docs/plugins.md).
 #
-# Finding your stop_id and lines: run `python -m kindle_dash_gen_nyc mta list-stations` to dump
+# Finding your stop_id and lines: run `python -m kindle_dash_gen mta list-stations` to dump
 # every station as "stop_id <tab> routes <tab> name", then grep it, e.g.
-#   uv run python -m kindle_dash_gen_nyc mta list-stations | grep -i "union sq"
+#   uv run python -m kindle_dash_gen mta list-stations | grep -i "union sq"
 # Use the base stop id (e.g. R20), not the N/S-suffixed variant.
 #
 # Optional `display_name` sets the label a layout shows; the key stays the canonical name that
@@ -73,7 +73,7 @@ prompt_template = "dense"  # bundled template name, or a filesystem path to your
 #   format_reading(temp, units)   format_apparent(temp, units)   format_temp(celsius, units)
 #   format_wind(kmh, direction, units)      format_eta(arrival, now)
 #   weather_icon(report) -> "sunny" | "cloudy" | "rain" | "snow"
-# See kindle_dash_gen_nyc/render/prompt.py and assets/dashboard_prompts/dense.j2 for details.
+# See kindle_dash_gen/render/prompt.py and assets/dashboard_prompts/dense.j2 for details.
 
 # One or more output dashboards, each keyed by a name ([dashboards.<name>]). A single run gathers
 # the weather + subway data once and renders every dashboard from it, writing each to its own path.

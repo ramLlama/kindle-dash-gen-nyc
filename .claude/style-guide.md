@@ -63,8 +63,8 @@ live in `pyproject.toml` (`[tool.ruff]`).
 
 - isort-ordered (ruff `I`): stdlib, third-party, first-party (`from . / from ..`).
 - `models/__init__.py` re-exports the domain models with an explicit `__all__`; import domain
-  types from `kindle_dash_gen_nyc.models`, not the submodules.
-- Bundled assets are loaded via `importlib.resources.files("kindle_dash_gen_nyc")`, never with
+  types from `kindle_dash_gen.models`, not the submodules.
+- Bundled assets are loaded via `importlib.resources.files("kindle_dash_gen")`, never with
   hardcoded filesystem paths — keeps them resolvable regardless of CWD.
 
 ## Commits

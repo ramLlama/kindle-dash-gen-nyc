@@ -1,4 +1,4 @@
-# kindle-dash-gen-nyc
+# kindle-dash-gen
 
 ## What This Project Does
 
@@ -26,8 +26,8 @@ device. Intended to run unattended on an interval (e.g. every 5 minutes).
 ## Repository Structure
 
 ```
-kindle_dash_gen_nyc/
-  __main__.py          # `python -m kindle_dash_gen_nyc` entry -> cli.run()
+kindle_dash_gen/
+  __main__.py          # `python -m kindle_dash_gen` entry -> cli.run()
   cli.py               # typer app: version, run, weather, mta group, dashboard group
   config.py            # TOML -> pydantic Config; Secret (value | value_from_cmd)
   pipeline.py          # gather -> build_prompt -> render -> post_process -> atomic write
@@ -91,10 +91,10 @@ uv sync
 cp config.example.toml config.toml     # edit; config.toml is gitignored
 
 # Run in place (NOT installed — always via -m):
-uv run python -m kindle_dash_gen_nyc --help
-uv run python -m kindle_dash_gen_nyc --config config.toml dashboard preview-prompt  # no API spend
-uv run python -m kindle_dash_gen_nyc --config config.toml run --one-shot            # one iteration
-uv run python -m kindle_dash_gen_nyc --config config.toml run                       # loop
+uv run python -m kindle_dash_gen --help
+uv run python -m kindle_dash_gen --config config.toml dashboard preview-prompt  # no API spend
+uv run python -m kindle_dash_gen --config config.toml run --one-shot            # one iteration
+uv run python -m kindle_dash_gen --config config.toml run                       # loop
 
 # Verification gates (both must pass):
 uv run pytest
@@ -133,7 +133,7 @@ subcommand loads it on demand via `_config(ctx)`.
 - **Atomic writes.** Output is written to a `.tmp` sibling then `Path.replace`d, so a crash
   mid-write leaves the previous PNG intact. Keep this when touching the write path.
 - **`package = false` / run via `-m`.** There is no install step and no console script on PATH.
-  Always invoke `uv run python -m kindle_dash_gen_nyc`.
+  Always invoke `uv run python -m kindle_dash_gen`.
 - **protobuf override.** `nyct-gtfs` hard-pins `protobuf==4.25.3`, which crashes on Python 3.14.
   `pyproject.toml` forces `protobuf>=6` via `[tool.uv] override-dependencies`. See the comment
   there and the upstream issue link before touching MTA deps.

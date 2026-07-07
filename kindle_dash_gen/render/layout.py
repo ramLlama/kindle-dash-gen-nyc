@@ -1,13 +1,13 @@
 """Pillow rendering backend: the layout registry and dispatch.
 
-The alternative to the LLM backend (:mod:`kindle_dash_gen_nyc.render.openrouter`). A named *layout*
+The alternative to the LLM backend (:mod:`kindle_dash_gen.render.openrouter`). A named *layout*
 draws :class:`DashboardData` directly with Pillow at the device's native resolution, so the output
 is exact, free, offline, and never garbles the underlying data.
 
 Layouts are **plugins** — nothing is special-cased here. Each layout (the bundled ``glanceable``
 included) is a package under a discovered plugin root that calls :func:`register_layout` at import
 time; :func:`render` loads them on first use. Build one on the public
-:mod:`kindle_dash_gen_nyc.render.toolkit` surface. See ``docs/plugins.md``.
+:mod:`kindle_dash_gen.render.toolkit` surface. See ``docs/plugins.md``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class Layout(Protocol):
     """The interface a layout class implements: construct with panel size + font, then render.
 
     ``font`` is the dashboard's configured font family, or ``None`` when unspecified. A layout
-    resolves it into :class:`~kindle_dash_gen_nyc.render.toolkit.Fonts` itself, so it can supply its
+    resolves it into :class:`~kindle_dash_gen.render.toolkit.Fonts` itself, so it can supply its
     own default(s) for the ``None`` case (e.g. ``Fonts(font or DEFAULT_FONT)``).
     """
 
@@ -38,7 +38,7 @@ class Layout(Protocol):
         ...
 
 
-# Populated only by plugin discovery (see :mod:`kindle_dash_gen_nyc.plugins`) — no builtins here.
+# Populated only by plugin discovery (see :mod:`kindle_dash_gen.plugins`) — no builtins here.
 _LAYOUTS: dict[str, type[Layout]] = {}
 
 

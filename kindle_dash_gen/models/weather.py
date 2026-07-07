@@ -1,7 +1,7 @@
 """Weather domain models.
 
 All values are SI (°C, km/h) at full precision; rounding to whole degrees happens only at
-display time in :mod:`kindle_dash_gen_nyc.format`.
+display time in :mod:`kindle_dash_gen.format`.
 """
 
 from __future__ import annotations

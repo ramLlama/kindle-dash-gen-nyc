@@ -106,7 +106,7 @@ height, fonts: Fonts, units)` + `render(data) -> Image`.
   and `LayoutError`. `glanceable` uses only this — so any private plugin (or a 1:1 recreation of
   `glanceable`) can be built without core internals.
 - **Discovery (`plugins.py`)** scans two roots by identical logic: the bundled
-  `kindle_dash_gen_nyc.render.layouts` package (always), and an optional local directory named by
+  `kindle_dash_gen.render.layouts` package (always), and an optional local directory named by
   `Config.plugins_path` (imported by directory name after putting its parent on `sys.path`).
   `load_plugins(local_dir=None)` is idempotent; a missing package is a silent no-op. `pipeline`
   passes `cfg.plugins_path`; `layout.render()` loads the bundled root on its own for direct callers.

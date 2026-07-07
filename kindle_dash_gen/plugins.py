@@ -1,9 +1,9 @@
 """Render-plugin discovery.
 
 There are two plugin directories, discovered by identical logic: the **bundled** layouts shipped
-with the app (``kindle_dash_gen_nyc.render.layouts``, always loaded) and an optional **local**
+with the app (``kindle_dash_gen.render.layouts``, always loaded) and an optional **local**
 directory of private plugins named by ``Config.plugins_path``. Each plugin is a subpackage that
-calls :func:`kindle_dash_gen_nyc.render.layout.register_layout` at import time; discovery just
+calls :func:`kindle_dash_gen.render.layout.register_layout` at import time; discovery just
 imports them. No entry-points are used — the project runs in place (``package = false``).
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_BUNDLED_ROOT = "kindle_dash_gen_nyc.render.layouts"
+_BUNDLED_ROOT = "kindle_dash_gen.render.layouts"
 
 _bundled_loaded = False
 _loaded_local: set[Path] = set()

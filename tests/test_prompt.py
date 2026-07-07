@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from kindle_dash_gen_nyc.models import (
+from kindle_dash_gen.models import (
     DashboardData,
     Direction,
     HourlyForecast,
@@ -16,7 +16,7 @@ from kindle_dash_gen_nyc.models import (
     TrainArrival,
     WeatherReport,
 )
-from kindle_dash_gen_nyc.render.prompt import render_prompt
+from kindle_dash_gen.render.prompt import render_prompt
 
 NOW = datetime(2026, 7, 1, 14, 0, 0)
 

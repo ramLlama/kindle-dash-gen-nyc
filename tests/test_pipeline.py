@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from kindle_dash_gen_nyc import pipeline
-from kindle_dash_gen_nyc.config import Config
-from kindle_dash_gen_nyc.models import StationBoard
-from kindle_dash_gen_nyc.sources.mta import MtaError
-from kindle_dash_gen_nyc.sources.weather import WeatherError
+from kindle_dash_gen import pipeline
+from kindle_dash_gen.config import Config
+from kindle_dash_gen.models import StationBoard
+from kindle_dash_gen.sources.mta import MtaError
+from kindle_dash_gen.sources.weather import WeatherError
 
 CONFIG: dict = {
     "location": {"latitude": 40.7484, "longitude": -73.9857},

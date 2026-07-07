@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from kindle_dash_gen_nyc.config import Secret, load_config
+from kindle_dash_gen.config import Secret, load_config
 
 EXAMPLE = """
 [location]

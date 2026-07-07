@@ -8,9 +8,9 @@ one uses, so `glanceable` could be recreated 1:1 as a private plugin.
 
 ## The two plugin directories
 
-Both are discovered by identical logic (`kindle_dash_gen_nyc/plugins.py`):
+Both are discovered by identical logic (`kindle_dash_gen/plugins.py`):
 
-1. **Bundled** — `kindle_dash_gen_nyc/render/layouts/`, shipped with the app. Always loaded.
+1. **Bundled** — `kindle_dash_gen/render/layouts/`, shipped with the app. Always loaded.
 2. **Local** — a directory of your private plugins, named by `plugins_path` in your config. Loaded
    only when set. It is imported by directory name (its parent is added to `sys.path`), so it must
    be a Python package (have an `__init__.py`). The path must be **absolute** (so discovery is
@@ -28,8 +28,8 @@ A plugin is a **subpackage** of a plugin directory that, on import, calls `regis
 
 ```python
 # <plugins_dir>/my_layout/__init__.py
-from kindle_dash_gen_nyc.render.layout import register_layout
-from kindle_dash_gen_nyc.render.toolkit import DEFAULT_FONT, INK, PAPER, Fonts, fit_font, load_asset_image
+from kindle_dash_gen.render.layout import register_layout
+from kindle_dash_gen.render.toolkit import DEFAULT_FONT, INK, PAPER, Fonts, fit_font, load_asset_image
 from PIL import Image, ImageDraw
 
 
@@ -60,7 +60,7 @@ layout  = "my_layout"
 
 ## The `Layout` protocol
 
-A layout class satisfies `kindle_dash_gen_nyc.render.layout.Layout`:
+A layout class satisfies `kindle_dash_gen.render.layout.Layout`:
 
 - `__init__(self, width: int, height: int, font: str | None, units: str)` — `font` is the
   dashboard's configured font family, or `None` when unspecified. Resolve it into `Fonts` yourself,
@@ -71,11 +71,11 @@ A layout class satisfies `kindle_dash_gen_nyc.render.layout.Layout`:
   of exactly `width` × `height`. It is post-processed (quantized to the device gray levels) by the
   pipeline; a pillow layout is already the exact size, so the fit step is a no-op.
 
-`DashboardData` (`kindle_dash_gen_nyc.models`) carries `weather: WeatherReport | None`, `boards:
+`DashboardData` (`kindle_dash_gen.models`) carries `weather: WeatherReport | None`, `boards:
 list[StationBoard]`, and `generated_at: datetime`. Both `weather` and `boards` can be absent
 (sources degrade independently), so guard them.
 
-## The toolkit (`kindle_dash_gen_nyc.render.toolkit`)
+## The toolkit (`kindle_dash_gen.render.toolkit`)
 
 The public surface for building layouts — everything the bundled `glanceable` uses:
 

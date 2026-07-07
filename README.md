@@ -1,4 +1,4 @@
-# kindle-dash-gen-nyc
+# kindle-dash-gen
 
 Generate a Kindle e-ink dashboard image with local weather (NWS) and real-time NYC subway
 arrivals (MTA), rendered by an OpenRouter image model and post-processed for a Kindle
@@ -29,13 +29,13 @@ cp config.example.toml config.toml   # then edit config.toml
 Run in place from the clone (no install step):
 
 ```sh
-uv run python -m kindle_dash_gen_nyc --help
-uv run python -m kindle_dash_gen_nyc version
-uv run python -m kindle_dash_gen_nyc --config config.toml dashboard preview-prompt  # debug, no spend
-uv run python -m kindle_dash_gen_nyc --config config.toml dashboard render out/raw.png
-uv run python -m kindle_dash_gen_nyc --config config.toml dashboard post-process out/raw.png out/dashboard.png
-uv run python -m kindle_dash_gen_nyc --config config.toml run --one-shot   # generate once and exit
-uv run python -m kindle_dash_gen_nyc --config config.toml run              # loop every interval
+uv run python -m kindle_dash_gen --help
+uv run python -m kindle_dash_gen version
+uv run python -m kindle_dash_gen --config config.toml dashboard preview-prompt  # debug, no spend
+uv run python -m kindle_dash_gen --config config.toml dashboard render out/raw.png
+uv run python -m kindle_dash_gen --config config.toml dashboard post-process out/raw.png out/dashboard.png
+uv run python -m kindle_dash_gen --config config.toml run --one-shot   # generate once and exit
+uv run python -m kindle_dash_gen --config config.toml run              # loop every interval
 ```
 
 `run` is the full pipeline: it gathers weather + subway data **once**, then renders every
@@ -66,7 +66,7 @@ stdout is the key (`{ value_from_cmd = "pass show openrouter/key" }`).
 
 `[openrouter].prompt_template` selects the Jinja2 template describing the dashboard to the
 image model: either a bundled name (currently `"dense"`, an info-dense layout — see
-`kindle_dash_gen_nyc/assets/dashboard_prompts/dense.j2`) or a filesystem path to your own
+`kindle_dash_gen/assets/dashboard_prompts/dense.j2`) or a filesystem path to your own
 `.j2` file. Custom templates render with this context:
 
 - `weather` (`WeatherReport | None`), `boards` (`list[StationBoard]`)

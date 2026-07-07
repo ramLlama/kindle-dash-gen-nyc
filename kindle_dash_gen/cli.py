@@ -165,7 +165,7 @@ def mta_get_current(ctx: typer.Context) -> None:
 @mta_app.command("list-stations")
 def mta_list_stations() -> None:
     """Dump every MTA station (stop id, routes, name) — grep it to fill in config."""
-    data = files("kindle_dash_gen_nyc").joinpath("assets/mta/stations.csv")
+    data = files("kindle_dash_gen").joinpath("assets/mta/stations.csv")
     with data.open() as f:
         rows = [(r["stop_id"], ",".join(r["routes"].split()), r["name"]) for r in csv.DictReader(f)]
     id_width = max(len(stop_id) for stop_id, _, _ in rows)

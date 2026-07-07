@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from kindle_dash_gen_nyc import plugins
-from kindle_dash_gen_nyc.render import layout
-from kindle_dash_gen_nyc.render.layout import LayoutError, register_layout
+from kindle_dash_gen import plugins
+from kindle_dash_gen.render import layout
+from kindle_dash_gen.render.layout import LayoutError, register_layout
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_load_plugins_local_idempotent(tmp_path, registry) -> None:
     (pkg / "one").mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "one" / "__init__.py").write_text(
-        "from kindle_dash_gen_nyc.render.layout import register_layout\n"
+        "from kindle_dash_gen.render.layout import register_layout\n"
         "register_layout('once_only', object)\n"
     )
     plugins.load_plugins(local_dir=pkg)
@@ -93,7 +93,7 @@ def test_load_plugins_discovers_a_local_plugin(tmp_path, registry) -> None:
     (pkg / "hi").mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "hi" / "__init__.py").write_text(
-        "from kindle_dash_gen_nyc.render.layout import register_layout\n"
+        "from kindle_dash_gen.render.layout import register_layout\n"
         "class Hi:\n"
         "    def __init__(self, width, height, fonts, units):\n"
         "        pass\n"

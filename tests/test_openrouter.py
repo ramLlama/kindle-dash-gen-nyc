@@ -8,7 +8,7 @@ import json
 import niquests_mock as nm
 import pytest
 
-from kindle_dash_gen_nyc.render.openrouter import (
+from kindle_dash_gen.render.openrouter import (
     OpenRouterClient,
     OpenRouterError,
     nearest_aspect_ratio,

@@ -1,5 +1,5 @@
 [project]
-name = "kindle-dash-gen-nyc"
+name = "kindle-dash-gen"
 version = "0.1.0"
 description = "Generate a Kindle e-ink dashboard with NYC weather and subway info."
 readme = "README.md"
@@ -23,7 +23,7 @@ dev = [
 ]
 
 [tool.uv]
-# Run in place from the clone (uv run python -m kindle_dash_gen_nyc); not a built/installed package.
+# Run in place from the clone (uv run python -m kindle_dash_gen); not a built/installed package.
 package = false
 # nyct-gtfs hard-pins protobuf==4.25.3, which crashes on Python 3.14 ("Metaclasses with
 # custom tp_new are not supported"). A modern protobuf works with its bindings.
@@ -38,7 +38,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.14"
-files = ["kindle_dash_gen_nyc"]
+files = ["kindle_dash_gen"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 no_implicit_optional = true

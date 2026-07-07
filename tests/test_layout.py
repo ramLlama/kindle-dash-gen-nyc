@@ -13,7 +13,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from kindle_dash_gen_nyc.models import (
+from kindle_dash_gen.models import (
     DashboardData,
     Direction,
     HourlyForecast,
@@ -22,8 +22,8 @@ from kindle_dash_gen_nyc.models import (
     TrainArrival,
     WeatherReport,
 )
-from kindle_dash_gen_nyc.render.layout import LayoutError, render
-from kindle_dash_gen_nyc.render.toolkit import _resolve_face
+from kindle_dash_gen.render.layout import LayoutError, render
+from kindle_dash_gen.render.toolkit import _resolve_face
 
 NOW = datetime(2026, 7, 2, 20, 30, 0)
 W, H = 1072, 1448
