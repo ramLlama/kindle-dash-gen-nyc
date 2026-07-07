@@ -61,9 +61,9 @@ docs/plugins.md        # how to write a render layout plugin (the public contrac
 - **DashboardData** (`models/dashboard.py`) is the aggregate handed to the renderer: an optional
   `WeatherReport`, a list of `StationBoard`, and `generated_at` (also used as "now" for ETAs).
 - **Station vs Platform** (`config.py`): a config **Station** is a display board keyed by name;
-  it merges one or more **Platform** entries (each a GTFS base stop id + the lines serving it),
-  and caps arrivals per direction via `max_arrivals`. Example: "Union Sq" merges the N/Q/R/W,
-  4/5/6, and L platforms into one board.
+  it merges one or more **Platform** entries (each a GTFS base stop id + the lines serving it)
+  into per-direction arrival lists. Example: "Union Sq" merges the N/Q/R/W, 4/5/6, and L platforms
+  into one board. Boards are **uncapped** — the layout decides how many arrivals to show at render.
 - **Direction** is a `StrEnum` with values `"N"`/`"S"` (GTFS uptown/downtown, nominal for the L).
 - **WeatherReport** carries current conditions, today/tomorrow high-low, and upcoming hours.
   `Temperature` bundles a `real` value with an optional `feels_like` (apparent).

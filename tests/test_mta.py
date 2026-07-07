@@ -60,8 +60,8 @@ def _platform(**kw) -> Platform:
     return Platform(**defaults)
 
 
-def _station(platforms: list[Platform] | None = None, max_arrivals: int = 2) -> Station:
-    return Station(platforms=platforms or [_platform()], max_arrivals=max_arrivals)
+def _station(platforms: list[Platform] | None = None) -> Station:
+    return Station(platforms=platforms or [_platform()])
 
 
 def _loader_for(trips: list[FakeTrip]):
@@ -78,11 +78,11 @@ def _minutes(arrivals) -> list[int]:
     return [round((a.arrival - NOW).total_seconds() / 60) for a in arrivals]
 
 
-def test_arrivals_grouped_sorted_and_capped_per_direction() -> None:
+def test_arrivals_grouped_and_sorted_per_direction() -> None:
     trips = [
-        _trip("N", "N", "Astoria", "R20N", 3),
         _trip("Q", "N", "96 St", "R20N", 7),
-        _trip("R", "N", "Forest Hills", "R20N", 12),  # dropped: 3rd northbound, cap is 2
+        _trip("N", "N", "Astoria", "R20N", 3),  # out of order on purpose
+        _trip("R", "N", "Forest Hills", "R20N", 12),
         _trip("R", "S", "Bay Ridge", "R20S", 5),
     ]
     loader, _ = _loader_for(trips)
@@ -91,7 +91,8 @@ def test_arrivals_grouped_sorted_and_capped_per_direction() -> None:
     board = boards[0]
     assert board.name == "Union Sq"
     assert list(board.arrivals_by_direction.keys()) == [Direction.NORTH, Direction.SOUTH]
-    assert _minutes(board.arrivals_by_direction["N"]) == [3, 7]  # cap 2, soonest kept
+    # No truncation at fetch: every upcoming arrival is kept, sorted ascending per direction.
+    assert _minutes(board.arrivals_by_direction["N"]) == [3, 7, 12]
     assert _minutes(board.arrivals_by_direction["S"]) == [5]
 
 
@@ -111,8 +112,8 @@ def test_platforms_merge_within_direction() -> None:
     assert len(calls) == 2  # NQRW and L are distinct feeds
 
 
-def test_cap_applies_across_platforms_per_direction() -> None:
-    # Two platforms, both northbound; the station cap of 2 applies to the merged group.
+def test_platforms_merge_fully_without_truncation() -> None:
+    # Two platforms, both northbound; all arrivals merge into one sorted group (no cap).
     trips = [
         _trip("Q", "N", "96 St", "R20N", 3),
         _trip("N", "N", "Astoria", "R20N", 7),
@@ -121,10 +122,10 @@ def test_cap_applies_across_platforms_per_direction() -> None:
     ]
     loader, _ = _loader_for(trips)
     platforms = [_platform(), _platform(lines=["L"], stop_id="L03")]
-    stations = {"Union Sq": _station(platforms, max_arrivals=2)}
+    stations = {"Union Sq": _station(platforms)}
     boards = MtaClient(stations, feed_loader=loader).fetch(now=NOW)
-    # Merged N = [2, 3, 5, 7]; capped at 2 -> [2, 3].
-    assert _minutes(boards[0].arrivals_by_direction["N"]) == [2, 3]
+    # Merged, sorted N = [2, 3, 5, 7]; nothing dropped at fetch.
+    assert _minutes(boards[0].arrivals_by_direction["N"]) == [2, 3, 5, 7]
 
 
 def test_past_arrivals_excluded() -> None:

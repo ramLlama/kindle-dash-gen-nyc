@@ -70,15 +70,16 @@ class MtaClient:
     def _board(
         self, name: str, station: Station, feeds: dict[str, NYCTFeed], now: datetime
     ) -> StationBoard:
-        # Merge every platform's arrivals, then group by direction, sort, and cap per
-        # direction at the station level (across all platforms).
+        # Merge every platform's arrivals, then group by direction and sort. No truncation here:
+        # boards carry every upcoming arrival so a layout can pick what to show (e.g. next per
+        # line, or the soonest few) at render time.
         by_direction: dict[Direction, list[TrainArrival]] = defaultdict(list)
         for platform in station.platforms:
             for arrival in _platform_arrivals(platform, feeds, now):
                 by_direction[arrival.direction].append(arrival)
-        # Canonical N-then-S order, each sorted and capped at the station level.
+        # Canonical N-then-S order, each sorted ascending by arrival time.
         ordered = {
-            d: sorted(by_direction[d], key=lambda a: a.arrival)[: station.max_arrivals]
+            d: sorted(by_direction[d], key=lambda a: a.arrival)
             for d in _DIRECTIONS
             if d in by_direction
         }
@@ -88,7 +89,7 @@ class MtaClient:
 def _platform_arrivals(
     platform: Platform, feeds: dict[str, NYCTFeed], now: datetime
 ) -> list[TrainArrival]:
-    """Every upcoming arrival for one platform (uncapped; the station applies the cap)."""
+    """Every upcoming arrival for one platform."""
     target_ids = _target_stop_ids(platform)
     arrivals: list[TrainArrival] = []
     for url in _feed_urls(platform):

@@ -15,18 +15,17 @@ units = "both"           # display units: "us" (°F), "si" (°C), or "both"
 rollover_hour = 20     # after this local hour, high/low show the next day
 hourly_hours = 4       # number of upcoming hourly forecasts to include
 
-#^ How do I figure out my station's stop id and lines that go there? Put that info here too. Hopefully it's just a simple manual website/csv lookup.
-# Stations are keyed by display name. A station has a max_arrivals cap and one or more
-# platform entries ([[stations."Name".platforms]] blocks); the platforms' arrivals are
-# merged into a single board and capped at max_arrivals per direction. A platform has one
-# GTFS base stop id (N/S suffix handled via direction), so lines on different platforms
-# (e.g. the L vs the N/Q/R/W at Union Sq) are separate platform entries under one name.
+# Stations are keyed by display name. A station has one or more platform entries
+# ([[stations."Name".platforms]] blocks); the platforms' arrivals are merged into a single board.
+# A platform has one GTFS base stop id (N/S suffix handled via direction), so lines on different
+# platforms (e.g. the L vs the N/Q/R/W at Union Sq) are separate platform entries under one name.
+# Boards carry every upcoming arrival; how many to show is up to the layout (see docs/plugins.md).
 #
-# Finding stop_id and lines: run `python -m kindle_dash_gen_nyc mta list-stations` to dump
-# every station as "stop_id <tab> routes <tab> name" and grep it, e.g. `... | grep -i "union sq"`.
+# Finding your stop_id and lines: run `python -m kindle_dash_gen_nyc mta list-stations` to dump
+# every station as "stop_id <tab> routes <tab> name", then grep it, e.g.
+#   uv run python -m kindle_dash_gen_nyc mta list-stations | grep -i "union sq"
 # Use the base stop id (e.g. R20), not the N/S-suffixed variant.
 [stations."Union Sq"]
-max_arrivals = 3           # soonest trains per direction, across all platforms
 
   [[stations."Union Sq".platforms]]
   lines = ["N", "Q", "R", "W"]
@@ -46,7 +45,6 @@ max_arrivals = 3           # soonest trains per direction, across all platforms
 # A second nearby station renders as its own column: the 6th Ave "14 St" (F, M),
 # a few blocks west of Union Sq.
 [stations."14 St-6 Av"]
-max_arrivals = 3
 
   [[stations."14 St-6 Av".platforms]]
   lines = ["F", "M"]

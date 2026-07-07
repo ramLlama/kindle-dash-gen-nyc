@@ -75,16 +75,16 @@ class Platform(BaseModel):
 
 
 class Station(BaseModel):
-    """A display board: one or more platforms merged, capped per direction.
+    """A display board: one or more platforms merged into per-direction arrival lists.
 
     Several platforms under one station are merged (e.g. the N/Q/R/W and the L platforms of
-    "Union Sq"); ``max_arrivals`` caps each direction across all of them.
+    "Union Sq"). Boards carry every upcoming arrival, sorted; how many to show is a render-time
+    decision made by the layout (see docs/plugins.md), not a data-collection cap.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     platforms: list[Platform]
-    max_arrivals: int = 3  # per direction, across all platforms
 
 
 class OpenRouter(BaseModel):

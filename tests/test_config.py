@@ -16,7 +16,6 @@ longitude = -73.9857
 user_agent = "test-agent (test@example.com)"
 
 [stations."Union Sq"]
-max_arrivals = 3
 
 [[stations."Union Sq".platforms]]
 lines = ["N", "Q", "R", "W"]
@@ -53,7 +52,6 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     # Two platforms grouped under one station, merged into one board.
     assert list(cfg.stations.keys()) == ["Union Sq"]
     station = cfg.stations["Union Sq"]
-    assert station.max_arrivals == 3
     assert len(station.platforms) == 2
     assert station.platforms[0].lines == ["N", "Q", "R", "W"]
     assert station.platforms[1].stop_id == "L03"

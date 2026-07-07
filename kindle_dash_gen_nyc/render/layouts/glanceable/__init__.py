@@ -146,8 +146,8 @@ class _Glanceable:
             self.d.text((x + 12, y), "No trains", font=self.fonts.get(34, "Regular"),
                         fill=INK, anchor="la")
             return y + pitch
-        # Fixed cap of 3 rows per direction: this deterministic layout is sized for 3 (independent
-        # of Station.max_arrivals, which the gathered board already applies); extra arrivals drop.
+        # This deterministic layout is sized for 3 rows per direction; it shows the soonest 3 of
+        # the (uncapped) board and drops the rest. Truncation is the layout's call, not the fetch's.
         for a in arrivals[:3]:
             # departure clock time on the left, route letter (bold, no badge) on the right; both on
             # a shared baseline so the all-caps route lines up with the time's descenders

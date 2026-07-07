@@ -113,6 +113,27 @@ def test_dense_prompt_renders() -> None:
     assert len(prompt) > 0
 
 
+def test_dense_prompt_caps_arrivals_per_direction() -> None:
+    # Boards are uncapped now; the prompt is a consumer that self-limits (soonest 3 per direction)
+    # so a busy station can't bloat the prompt into an overcrowded panel.
+    many = StationBoard(
+        name="Busy St",
+        arrivals_by_direction={
+            Direction.NORTH: [
+                TrainArrival(route=str(i), direction=Direction.NORTH, destination=f"D{i}",
+                             arrival=NOW + timedelta(minutes=i))
+                for i in range(1, 8)
+            ]
+        },
+    )
+    prompt = render_prompt(
+        _dashboard(boards=[many]), units="us", width=1072, height=1448, aspect="3:4"
+    )
+    # Only the soonest three (minutes 1, 2, 3) appear; later ones are dropped.
+    assert prompt.count("→ D") == 3
+    assert "D4" not in prompt
+
+
 def test_override_template_path_is_used(tmp_path: Path) -> None:
     custom = tmp_path / "custom.j2"
     custom.write_text("CUSTOM {{ width }}x{{ height }} temp={{ format_temp(20.0, units) }}")

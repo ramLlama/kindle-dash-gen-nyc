@@ -59,8 +59,8 @@ Stations (in order):
 {% else %}
 {% for board in boards %}
   {{ board.name }}:
-{% set north = board.arrivals_by_direction.get("N", []) %}
-{% set south = board.arrivals_by_direction.get("S", []) %}
+{% set north = board.arrivals_by_direction.get("N", [])[:3] %}
+{% set south = board.arrivals_by_direction.get("S", [])[:3] %}
     Northbound:
 {% if north|length == 0 %}
       No trains

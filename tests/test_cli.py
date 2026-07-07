@@ -22,7 +22,6 @@ longitude = -73.9857
 user_agent = "test-agent (test@example.com)"
 
 [stations."Union Sq"]
-max_arrivals = 3
 
   [[stations."Union Sq".platforms]]
   lines = ["N", "Q", "R", "W"]

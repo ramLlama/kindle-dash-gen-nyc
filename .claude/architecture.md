@@ -75,8 +75,9 @@ All parsing failures raise `WeatherError`. Values stay SI at full precision.
 - Per platform, it filters trips by `line_id`, `headed_for_stop_id` (the platform stop id with
   `N`/`S` suffixes per its `direction`), and `underway=True`, extracts the predicted arrival at
   the matching stop, and drops arrivals already in the past.
-- A station merges all its platforms' arrivals, groups by `Direction`, sorts each group by
-  time, and caps at `max_arrivals` per direction (N-then-S order).
+- A station merges all its platforms' arrivals, groups by `Direction`, and sorts each group by
+  time (N-then-S order). No truncation here — boards carry every upcoming arrival; the layout
+  decides how many to show (see the Render section).
 - Feed load / parse failures raise `MtaError`. An unknown line id also raises `MtaError`.
 
 `feed_loader` is injectable for tests (defaults to `lambda url: NYCTFeed(url)`).
@@ -166,8 +167,8 @@ Returns PNG bytes. Defaults target the Kindle Voyage: 1072×1448 portrait, 16 gr
 
 - `Secret` — exactly one of `value` / `value_from_cmd` (enforced by a model validator);
   `resolve()` returns the literal or runs the shell command and returns stripped stdout.
-- `stations: dict[str, Station]` — display name → board; each `Station` has `platforms` +
-  `max_arrivals`; each `Platform` has `lines`, `stop_id`, `direction`.
+- `stations: dict[str, Station]` — display name → board; each `Station` has `platforms`; each
+  `Platform` has `lines`, `stop_id`, `direction`.
 - `Dashboard` — output `path`, pixel `width`/`height`, `gray_levels`, `post_process_method`,
   and optional `aspect_ratio` / `resolution` overrides.
 - `Schedule.interval_minutes` (default 5).
