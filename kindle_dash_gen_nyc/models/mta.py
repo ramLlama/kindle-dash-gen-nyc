@@ -28,8 +28,15 @@ class TrainArrival:
 class StationBoard:
     """Upcoming arrivals for one named station (may merge several platforms).
 
-    Arrivals are grouped by direction and sorted within each group.
+    Arrivals are grouped by direction and sorted within each group. ``name`` is the canonical
+    station name (what plugins match on); ``display_name`` optionally overrides what a layout shows.
     """
 
     name: str
     arrivals_by_direction: dict[Direction, list[TrainArrival]]
+    display_name: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Name a layout should show: ``display_name`` if set, else the canonical ``name``."""
+        return self.display_name if self.display_name is not None else self.name

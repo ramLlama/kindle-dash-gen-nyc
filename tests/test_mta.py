@@ -96,6 +96,22 @@ def test_arrivals_grouped_and_sorted_per_direction() -> None:
     assert _minutes(board.arrivals_by_direction["S"]) == [5]
 
 
+def test_display_name_carried_onto_board() -> None:
+    # A station's optional display_name flows to the board's `label`; `name` stays canonical.
+    loader, _ = _loader_for([])
+    station = Station(display_name="59 St - CC", platforms=[_platform()])
+    board = MtaClient({"59 St-Columbus Circle": station}, feed_loader=loader).fetch(now=NOW)[0]
+    assert board.name == "59 St-Columbus Circle"  # match key unchanged
+    assert board.label == "59 St - CC"
+
+
+def test_label_falls_back_to_name_without_display_name() -> None:
+    loader, _ = _loader_for([])
+    board = MtaClient({"Union Sq": _station()}, feed_loader=loader).fetch(now=NOW)[0]
+    assert board.display_name is None
+    assert board.label == "Union Sq"
+
+
 def test_platforms_merge_within_direction() -> None:
     trips = [
         _trip("Q", "N", "96 St", "R20N", 6),

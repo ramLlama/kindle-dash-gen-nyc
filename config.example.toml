@@ -25,7 +25,11 @@ hourly_hours = 4       # number of upcoming hourly forecasts to include
 # every station as "stop_id <tab> routes <tab> name", then grep it, e.g.
 #   uv run python -m kindle_dash_gen_nyc mta list-stations | grep -i "union sq"
 # Use the base stop id (e.g. R20), not the N/S-suffixed variant.
+#
+# Optional `display_name` sets the label a layout shows; the key stays the canonical name that
+# plugins match on (e.g. home_mta_map), so renaming the display never breaks that match.
 [stations."Union Sq"]
+  # display_name = "Union Square"
 
   [[stations."Union Sq".platforms]]
   lines = ["N", "Q", "R", "W"]

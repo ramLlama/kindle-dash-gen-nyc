@@ -119,6 +119,15 @@ def test_font_defaults_none_when_unset(tmp_path: Path) -> None:
     assert load_config(_write(tmp_path, text)).dashboards["main"].font == "Futura"
 
 
+def test_station_display_name_optional(tmp_path: Path) -> None:
+    # display_name defaults to None (show the key) and parses when set.
+    assert load_config(_write(tmp_path, EXAMPLE)).stations["Union Sq"].display_name is None
+    text = EXAMPLE.replace(
+        '[stations."Union Sq"]\n', '[stations."Union Sq"]\ndisplay_name = "Union Square"\n'
+    )
+    assert load_config(_write(tmp_path, text)).stations["Union Sq"].display_name == "Union Square"
+
+
 def test_plugins_path_defaults_none_and_parses_absolute(tmp_path: Path) -> None:
     assert load_config(_write(tmp_path, EXAMPLE)).plugins_path is None
     text = 'plugins_path = "/opt/kindle/plugins"\n' + EXAMPLE

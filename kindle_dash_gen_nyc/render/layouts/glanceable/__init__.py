@@ -196,7 +196,7 @@ class _Glanceable:
         pitch = max(58, min(96, (self.h - _MARGIN - y - fixed) / 6))
         for i, board in enumerate(boards):
             x = _MARGIN + i * (col_w + gutter)
-            self.d.text((x, y), board.name, font=self.fonts.get(44, "Bold"), fill=INK, anchor="la")
+            self.d.text((x, y), board.label, font=self.fonts.get(44, "Bold"), fill=INK, anchor="la")
             name_b = y + 58
             self.d.line((x, name_b, x + col_w, name_b), fill=INK, width=2)
             cy: float = name_b + 18

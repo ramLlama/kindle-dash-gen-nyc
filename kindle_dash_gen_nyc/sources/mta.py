@@ -78,7 +78,9 @@ class MtaClient:
             for d in _DIRECTIONS
             if d in by_direction
         }
-        return StationBoard(name=name, arrivals_by_direction=ordered)
+        return StationBoard(
+            name=name, arrivals_by_direction=ordered, display_name=station.display_name
+        )
 
 
 def _platform_arrivals(

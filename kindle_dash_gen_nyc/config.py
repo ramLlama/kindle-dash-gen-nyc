@@ -85,6 +85,10 @@ class Station(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     platforms: list[Platform]
+    # Label a layout shows instead of the station's name (the config key). The key stays the
+    # canonical name that plugins match on (e.g. home_mta_map), so renaming the display never
+    # breaks that match. Unset means show the name as-is.
+    display_name: str | None = None
 
 
 class OpenRouter(BaseModel):
