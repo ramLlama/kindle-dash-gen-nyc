@@ -1,10 +1,12 @@
-"""Render-plugin discovery.
+"""Plugin discovery for layouts and sources.
 
-There are two plugin directories, discovered by identical logic: the **bundled** layouts shipped
-with the app (``kindle_dash_gen.render.layouts``, always loaded) and an optional **local**
-directory of private plugins named by ``Config.plugins_path``. Each plugin is a subpackage that
-calls :func:`kindle_dash_gen.render.layout.register_layout` at import time; discovery just
-imports them. No entry-points are used — the project runs in place (``package = false``).
+Two kinds of plugin — render **layouts** and data **sources** — are discovered by identical logic.
+Each kind has a **bundled** root shipped with the app (``kindle_dash_gen.render.builtins`` and
+``kindle_dash_gen.sources.builtins``, always loaded) plus an optional shared **local** directory of
+private plugins named by ``Config.plugins_path`` (which may hold either kind). Each plugin is a
+subpackage that calls its registrar (:func:`~kindle_dash_gen.render.layout.register_layout` or
+:func:`~kindle_dash_gen.sources.registry.register_source`) at import time; discovery just imports
+them. No entry-points are used — the project runs in place (``package = false``).
 """
 
 from __future__ import annotations
@@ -18,24 +20,31 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_BUNDLED_ROOT = "kindle_dash_gen.render.layouts"
+# Bundled roots, one per plugin kind. Both are always loaded; a local plugins dir (below) may add
+# either kind, since a submodule registers itself via whichever registrar it imports.
+_BUNDLED_LAYOUT_ROOT = "kindle_dash_gen.render.builtins"
+_BUNDLED_SOURCE_ROOT = "kindle_dash_gen.sources.builtins"
 
-_bundled_loaded = False
+_bundled_layouts_loaded = False
+_bundled_sources_loaded = False
 _loaded_local: set[Path] = set()
 
 
 def load_plugins(local_dir: Path | None = None) -> None:
-    """Import the bundled layout plugins, and those in ``local_dir`` if given (both idempotent).
+    """Import the bundled layout + source plugins, and those in ``local_dir`` if given (idempotent).
 
     ``local_dir`` (from ``Config.plugins_path``) is an absolute directory (enforced by config
-    validation). A configured directory that does not exist is logged as a warning (a likely
-    misconfiguration), but a plugin that exists and fails to import propagates — we never silently
-    swallow a broken plugin.
+    validation) that may hold layout and/or source plugins. A configured directory that does not
+    exist is logged as a warning (a likely misconfiguration), but a plugin that exists and fails to
+    import propagates — we never silently swallow a broken plugin.
     """
-    global _bundled_loaded
-    if not _bundled_loaded:
-        _import_submodules(_BUNDLED_ROOT)
-        _bundled_loaded = True
+    global _bundled_layouts_loaded, _bundled_sources_loaded
+    if not _bundled_layouts_loaded:
+        _import_submodules(_BUNDLED_LAYOUT_ROOT)
+        _bundled_layouts_loaded = True
+    if not _bundled_sources_loaded:
+        _import_submodules(_BUNDLED_SOURCE_ROOT)
+        _bundled_sources_loaded = True
     if local_dir is not None:
         _load_local(local_dir)
 

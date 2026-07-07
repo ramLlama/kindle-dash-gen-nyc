@@ -26,7 +26,7 @@ from kindle_dash_gen.render.toolkit import (
     weather_icon,
 )
 
-_PACKAGE = "kindle_dash_gen.render.layouts.glanceable"  # this plugin's own package, for assets
+_PACKAGE = "kindle_dash_gen.render.builtins.glanceable"  # this plugin's own package, for assets
 _MARGIN = 44
 
 

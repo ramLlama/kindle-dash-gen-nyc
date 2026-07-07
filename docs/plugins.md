@@ -10,7 +10,7 @@ one uses, so `glanceable` could be recreated 1:1 as a private plugin.
 
 Both are discovered by identical logic (`kindle_dash_gen/plugins.py`):
 
-1. **Bundled** — `kindle_dash_gen/render/layouts/`, shipped with the app. Always loaded.
+1. **Bundled** — `kindle_dash_gen/render/builtins/`, shipped with the app. Always loaded.
 2. **Local** — a directory of your private plugins, named by `plugins_path` in your config. Loaded
    only when set. It is imported by directory name (its parent is added to `sys.path`), so it must
    be a Python package (have an `__init__.py`). The path must be **absolute** (so discovery is
@@ -104,6 +104,6 @@ The public surface for building layouts — everything the bundled `glanceable` 
   configuration error, so it fails fast).
 - Discovery uses import side-effects, not entry points — the project runs in place
   (`package = false`), so there is no install step.
-- The bundled `glanceable` at `render/layouts/glanceable/` is the worked reference: it depends only
+- The bundled `glanceable` at `render/builtins/glanceable/` is the worked reference: it depends only
   on this toolkit, owns its own `assets/icons/`, and registers itself — structurally identical to a
   private plugin.

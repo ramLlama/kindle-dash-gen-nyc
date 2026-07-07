@@ -1,7 +1,8 @@
-"""Render-plugin discovery and registration tests.
+"""Plugin discovery and registration tests.
 
-Cover the registry API, discovery of the bundled layouts, and loading a local plugins directory
-named by config (the same mechanism a private plugin like the home MTA map uses).
+Cover the layout and source registry APIs, discovery of the bundled plugins, and loading a local
+plugins directory named by config (the same mechanism a private plugin like the home MTA map uses,
+and which serves layouts and sources alike).
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import pytest
 from kindle_dash_gen import plugins
 from kindle_dash_gen.render import layout
 from kindle_dash_gen.render.layout import LayoutError, register_layout
+from kindle_dash_gen.sources import registry as source_registry_mod
+from kindle_dash_gen.sources.registry import SourceError, register_source
 
 
 @pytest.fixture
@@ -25,6 +28,16 @@ def registry():
     yield layout._LAYOUTS
     layout._LAYOUTS.clear()
     layout._LAYOUTS.update(saved)
+
+
+@pytest.fixture
+def source_registry():
+    """Snapshot the source registry and restore it, so test registrations don't leak."""
+    plugins.load_plugins()
+    saved = dict(source_registry_mod._SOURCES)
+    yield source_registry_mod._SOURCES
+    source_registry_mod._SOURCES.clear()
+    source_registry_mod._SOURCES.update(saved)
 
 
 class _Stub:
@@ -105,3 +118,30 @@ def test_load_plugins_discovers_a_local_plugin(tmp_path, registry) -> None:
     plugins.load_plugins(local_dir=pkg)
 
     assert "hi_local" in layout._LAYOUTS
+
+
+def test_register_source_adds_by_name(source_registry) -> None:
+    register_source("src_added", object)
+    assert source_registry["src_added"] is object
+
+
+def test_register_source_rejects_duplicate(source_registry) -> None:
+    register_source("src_dup", object)
+    with pytest.raises(SourceError):
+        register_source("src_dup", object)
+
+
+def test_load_plugins_discovers_a_local_source(tmp_path, source_registry) -> None:
+    # One local plugins dir serves both kinds: a subpackage that calls register_source is
+    # discovered by the same mechanism as a layout plugin.
+    pkg = tmp_path / "mysources"
+    (pkg / "feed").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feed" / "__init__.py").write_text(
+        "from kindle_dash_gen.sources.registry import register_source\n"
+        "register_source('feed_local', object)\n"
+    )
+
+    plugins.load_plugins(local_dir=pkg)
+
+    assert "feed_local" in source_registry_mod._SOURCES
