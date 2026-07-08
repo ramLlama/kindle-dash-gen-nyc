@@ -16,7 +16,7 @@ from ..config import PostProcessMethod
 
 
 def post_process(
-    png: bytes,
+    image: Image.Image,
     *,
     width: int,
     height: int,
@@ -24,13 +24,13 @@ def post_process(
     method: PostProcessMethod,
     rotate: bool,
 ) -> bytes:
-    """Fit, grayscale, and quantize ``png`` into a Kindle-ready PNG.
+    """Fit, grayscale, and quantize ``image`` into a Kindle-ready PNG.
 
     Steps, in order: grayscale → fit to ``(width, height)`` via ``method`` → quantize to
     ``gray_levels`` evenly-spaced grays → optionally rotate 90° (for a physically rotated
-    device). Returns PNG bytes.
+    device). Takes a Pillow image (the layout's raw render) and returns PNG bytes.
     """
-    img = Image.open(BytesIO(png)).convert("L")
+    img = image.convert("L")
     img = _fit(img, width, height, method)
     img = img.point(_quantize_lut(gray_levels))
     if rotate:

@@ -16,22 +16,25 @@ PostProcessMethod = Literal["resize", "crop", "pad"]
 
 
 class Dashboard(BaseModel):
+    """One output: which layout draws it, where it's written, and the Kindle output spec.
+
+    The dashboard owns the *output* (path, resolution, post-processing); the layout owns *how it
+    draws* — its own config, validated per-plugin from ``layout_config`` (see docs/plugins.md), so
+    render knobs like the font or display units live there, not here.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    path: Path
-    # Display units for weather temperatures (data is always SI internally; rounded/converted at
-    # render). A whole-dashboard presentation choice, so it lives here rather than on the source.
-    weather_temp_units: Literal["us", "si", "both"] = "us"
     layout: str = "glanceable"  # registered layout plugin (see docs/plugins.md)
-    # System font family (resolved via fontconfig). None = unspecified, letting a layout choose its
-    # own default (glanceable falls back to toolkit.DEFAULT_FONT). A set value overrides it.
-    font: str | None = None
+    output_path: Path  # where the finished PNG is written
     width: int = 1072  # Kindle Voyage, portrait (native orientation)
     height: int = 1448
     gray_levels: int = 16
     post_process_method: PostProcessMethod = "resize"
     # rotate the final image 90° before writing (for a physically rotated device)
     rotate: bool = False
+    # Raw table validated by the selected layout's own Config model (extra keys rejected there).
+    layout_config: dict[str, Any] = {}
 
 
 class Schedule(BaseModel):

@@ -25,7 +25,7 @@ lines = ["L"]
 stop_id = "L03"
 
 [dashboards.main]
-path = "./out/dashboard.png"
+output_path = "./out/dashboard.png"
 
 [schedule]
 interval_minutes = 5
@@ -34,7 +34,7 @@ interval_minutes = 5
 # A minimal pillow-only config with no [sources.*] at all (zero sources is valid).
 MINIMAL = """
 [dashboards.main]
-path = "./out/dashboard.png"
+output_path = "./out/dashboard.png"
 """
 
 
@@ -55,8 +55,14 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     assert dash.gray_levels == 16  # default
     assert dash.post_process_method == "resize"  # default
     assert dash.layout == "glanceable"  # default layout
-    assert dash.weather_temp_units == "us"  # default (display units live on the dashboard now)
+    assert dash.layout_config == {}  # default; the layout validates its own table (see test_layout)
     assert cfg.schedule.interval_minutes == 5
+
+
+def test_example_config_loads() -> None:
+    # The shipped example is the documented first-run (cp config.example.toml config.toml), so it
+    # must always validate — this guards against a config-schema change outrunning the example.
+    load_config(Path("config.example.toml"))
 
 
 def test_zero_sources_is_valid(tmp_path: Path) -> None:
@@ -75,7 +81,8 @@ def test_load_config_defaults_schedule(tmp_path: Path) -> None:
 def test_multiple_dashboards_parse(tmp_path: Path) -> None:
     # Several named [dashboards.<name>] blocks load into the dict, each with its own settings.
     text = EXAMPLE + (
-        '\n[dashboards.landscape]\npath = "./out/landscape.png"\nwidth = 1448\nheight = 1072\n'
+        '\n[dashboards.landscape]\noutput_path = "./out/landscape.png"\n'
+        "width = 1448\nheight = 1072\n"
     )
     cfg = load_config(_write(tmp_path, text))
     assert set(cfg.dashboards) == {"main", "landscape"}
@@ -84,16 +91,9 @@ def test_multiple_dashboards_parse(tmp_path: Path) -> None:
 
 
 def test_at_least_one_dashboard_required(tmp_path: Path) -> None:
-    text = EXAMPLE.replace('[dashboards.main]\npath = "./out/dashboard.png"\n', "")
+    text = EXAMPLE.replace('[dashboards.main]\noutput_path = "./out/dashboard.png"\n', "")
     with pytest.raises(ValidationError):
         load_config(_write(tmp_path, text))
-
-
-def test_font_defaults_none_when_unset(tmp_path: Path) -> None:
-    # An omitted font is None (unspecified) so a layout picks its own default; a set value parses.
-    assert load_config(_write(tmp_path, EXAMPLE)).dashboards["main"].font is None
-    text = EXAMPLE.replace("[dashboards.main]\n", '[dashboards.main]\nfont = "Futura"\n')
-    assert load_config(_write(tmp_path, text)).dashboards["main"].font == "Futura"
 
 
 def test_plugins_path_defaults_none_and_parses_absolute(tmp_path: Path) -> None:

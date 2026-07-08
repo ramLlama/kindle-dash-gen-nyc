@@ -24,7 +24,7 @@ CONFIG: dict = {
         },
         "mta": {"stations": {"Union Sq": {"platforms": [{"lines": ["N", "Q"], "stop_id": "R20"}]}}},
     },
-    "dashboards": {"main": {"path": "out/dashboard.png", "width": 100, "height": 140}},
+    "dashboards": {"main": {"output_path": "out/dashboard.png", "width": 100, "height": 140}},
     "schedule": {"interval_minutes": 5},
 }
 
@@ -32,7 +32,7 @@ CONFIG: dict = {
 def _config(tmp_path) -> Config:
     cfg = Config.model_validate(CONFIG)
     # parent dir does not exist yet
-    cfg.dashboards["main"].path = tmp_path / "out" / "dashboard.png"
+    cfg.dashboards["main"].output_path = tmp_path / "out" / "dashboard.png"
     return cfg
 
 
@@ -123,7 +123,7 @@ def test_run_once_writes_kindle_ready_image(tmp_path, monkeypatch) -> None:
 
     result = pipeline.run_once(cfg)
 
-    assert result.written == [cfg.dashboards["main"].path]
+    assert result.written == [cfg.dashboards["main"].output_path]
     assert result.failed == []
     out = Image.open(BytesIO(result.written[0].read_bytes()))
     assert out.size == (100, 140)  # fitted to the configured dimensions
@@ -145,15 +145,18 @@ def test_run_once_renders_every_dashboard_from_one_gather(tmp_path, monkeypatch)
 
     cfg = _config(tmp_path)
     cfg.dashboards["wide"] = cfg.dashboards["main"].model_copy(
-        update={"path": tmp_path / "out" / "wide.png", "width": 160, "height": 90}
+        update={"output_path": tmp_path / "out" / "wide.png", "width": 160, "height": 90}
     )
 
     result = pipeline.run_once(cfg)
 
     assert gathers["count"] == 1  # data fetched exactly once, shared across dashboards
-    assert set(result.written) == {cfg.dashboards["main"].path, cfg.dashboards["wide"].path}
-    assert Image.open(BytesIO(cfg.dashboards["main"].path.read_bytes())).size == (100, 140)
-    assert Image.open(BytesIO(cfg.dashboards["wide"].path.read_bytes())).size == (160, 90)
+    assert set(result.written) == {
+        cfg.dashboards["main"].output_path,
+        cfg.dashboards["wide"].output_path,
+    }
+    assert Image.open(BytesIO(cfg.dashboards["main"].output_path.read_bytes())).size == (100, 140)
+    assert Image.open(BytesIO(cfg.dashboards["wide"].output_path.read_bytes())).size == (160, 90)
 
 
 def test_run_loops_until_interrupted(monkeypatch) -> None:
@@ -207,14 +210,16 @@ def test_run_once_isolates_a_failing_dashboard(tmp_path, monkeypatch) -> None:
     # A healthy glanceable dashboard, plus one pointing at a layout that doesn't exist (its render
     # raises LayoutError, isolated to that dashboard).
     cfg.dashboards["broken"] = cfg.dashboards["main"].model_copy(
-        update={"path": tmp_path / "out" / "broken.png", "layout": "does-not-exist"}
+        update={"output_path": tmp_path / "out" / "broken.png", "layout": "does-not-exist"}
     )
 
     result = pipeline.run_once(cfg)  # does not raise
 
-    assert result.written == [cfg.dashboards["main"].path]  # the healthy dashboard still wrote
+    assert result.written == [
+        cfg.dashboards["main"].output_path
+    ]  # the healthy dashboard still wrote
     assert result.failed == ["broken"]  # the failure is reported, not swallowed
-    assert not cfg.dashboards["broken"].path.exists()
+    assert not cfg.dashboards["broken"].output_path.exists()
 
 
 def test_run_once_skips_render_when_all_sources_down(tmp_path, monkeypatch) -> None:
@@ -229,7 +234,7 @@ def test_run_once_skips_render_when_all_sources_down(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr(pipeline, "render", _must_not_render)
     cfg = _config(tmp_path)
-    path = cfg.dashboards["main"].path
+    path = cfg.dashboards["main"].output_path
     path.parent.mkdir(parents=True)
     path.write_bytes(b"PREVIOUS-IMAGE")  # a prior good dashboard
 

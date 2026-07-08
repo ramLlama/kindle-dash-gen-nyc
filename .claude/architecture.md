@@ -15,17 +15,16 @@ run() loop  ──every interval_minutes──▶  run_once(cfg)
                                              │
                             for each [dashboards.<name>] (shared data):
                                     render(cfg, data, dash):
-                                       render_raw(cfg, data, dash) ──▶ raw PNG   # dispatch on backend
-                                          ├ pillow: layout.render(data, ...)
-                                          └ llm:    build_prompt(...) + client.generate(...)
-                                       post_process(raw, w, h, gray_levels, method) ──▶ PNG
+                                       render_raw(cfg, data, dash) ──▶ raw Pillow Image
+                                          └ layout.render(data, ...)   # build layout from layout_config, draw
+                                       post_process(image, w, h, gray_levels, method) ──▶ PNG bytes
                                              │
-                                    _atomic_write(dash.path, png)   # per-dashboard, isolated
+                                    _atomic_write(dash.output_path, png)   # per-dashboard, isolated
 ```
 
-`render_raw()` dispatches on the dashboard's `backend`. The **pillow** backend (`_render_pillow`)
-draws locally; the **llm** backend (`_render_llm`) resolves the aspect ratio, renders the Jinja2
-prompt, and calls the image model. Both return raw PNG bytes and share `post_process()`.
+`render_raw()` builds the dashboard's named `layout` from its `layout_config` and draws
+`DashboardData` at the panel size, returning a raw Pillow `Image`. `post_process()` then grayscales,
+fits, and quantizes it into Kindle-ready PNG bytes.
 
 - **`gather()`** iterates the discovered source plugins (`build_sources(cfg.sources)` resolves each
   `[sources.<name>]` to its plugin class + validated config), constructs and `fetch`es each inside
@@ -33,10 +32,10 @@ prompt, and calls the image model. Both return raw PNG bytes and share `post_pro
   `type(result)` into `DashboardData.source_data`; a failed or empty source is simply absent. Two
   sources producing the same data type is a misconfiguration and raises (fail loud, not degrade).
 - **`run_once()`** gathers once, then renders every `[dashboards.<name>]` from that shared data,
-  each to its own `path`. It short-circuits when every source is empty (`len(source_data) == 0`):
-  writing a blank dashboard
-  would clobber the last good images and waste paid generations, so it returns an empty `RunResult`
-  instead. A single dashboard's render/write failure is isolated (logged, others proceed) and its
+  each to its own `output_path`. It short-circuits when every source is empty
+  (`len(source_data) == 0`): writing a blank dashboard would clobber the last good images, so it
+  returns an empty `RunResult` instead. A single dashboard's render/write failure is isolated
+  (logged, others proceed) and its
   name collected in `RunResult.failed`, which the `run --one-shot` CLI turns into a non-zero exit.
 - **`run()`** wraps `run_once()` in a `while True` + `time.sleep`. Any unexpected exception
   (i.e. not an isolated per-source or per-dashboard error, both already swallowed) is logged via
@@ -98,27 +97,35 @@ here, not in central config — and wraps its boards in an `MtaBoards` value; `M
 
 ## Render
 
-Two backends produce raw PNG bytes from `DashboardData`, selected per dashboard by its `backend`
-(`"pillow"` default, `"llm"` opt-in). `post_process()` is shared by both.
+A single renderer: a named **layout** draws `DashboardData` with Pillow and returns a raw `Image`;
+`post_process()` then makes it Kindle-ready. There is no backend concept — a dashboard just names a
+`layout` and supplies its `layout_config`.
 
-### Layout — pillow backend (render/layout.py + plugins)
+### Layout (render/layout.py + plugins)
 
-`render(data, *, units, width, height, layout, font)` (in `render/layout.py`) draws the dashboard
-deterministically with Pillow at the exact panel size and returns PNG bytes. It first calls
-`plugins.load_plugins()` to populate `_LAYOUTS` (a name → renderer-class registry), then dispatches
-by `layout` name. Unknown layout / unresolvable font / missing asset raise `LayoutError`. Free,
+`render(data, *, width, height, layout, layout_config)` (in `render/layout.py`) builds the named
+layout from its config and draws the dashboard deterministically with Pillow at the exact panel
+size, returning a raw `"L"`-mode `Image` (the caller post-processes it). It first calls
+`plugins.load_plugins()` to populate `_LAYOUTS` (a name → layout-class registry), then dispatches by
+`layout` name. Unknown layout / unresolvable font / missing asset raise `LayoutError`. Free,
 offline, exact, never garbles the data.
 
-**Layouts are plugins — nothing is special-cased.** `_LAYOUTS` starts empty; every layout
-(including bundled `glanceable`) registers itself via `register_layout(name, cls)` at import time,
-and discovery imports them. A layout class implements the `Layout` protocol: `__init__(width,
-height, fonts: Fonts, units)` + `render(data) -> Image`.
+**Layouts are plugins that own their config — nothing is special-cased.** `_LAYOUTS` starts empty;
+every layout (including bundled `glanceable`) registers itself via `register_layout(name, cls)` at
+import time, and discovery imports them. A layout class implements the `Layout` protocol: a
+`Config: ClassVar[type[BaseModel]]`, `__init__(config, *, width, height)`, and
+`render(data) -> Image`. Concrete layouts subclass `Layout[TheirConfig]` (e.g.
+`class _Glanceable(Layout[GlanceableConfig])`). `validate_layout(name, raw)` and
+`build_layout(name, raw, *, width, height)` mirror `sources/registry.py`'s `build_sources`: they
+validate a `[dashboards.<name>.layout_config]` table against the layout's own `Config`
+(`extra="forbid"`), then construct it at the panel size. The bundled `glanceable`'s `GlanceableConfig`
+declares `font: str | None` and `weather_temp_units: Literal["us","si","both"]`.
 
 - **Toolkit (`render/toolkit.py`)** is the public surface a plugin builds on: `Fonts` (fontconfig
   `fc-match` resolution → file + face index, verified against the requested family so a missing
   font fails fast), `INK`/`PAPER`, `fit_font` (shrink-to-fit), `load_asset_image(package, rel_path)`,
-  and `LayoutError`. `glanceable` uses only this — so any private plugin (or a 1:1 recreation of
-  `glanceable`) can be built without core internals.
+  the `format.py` display helpers, and `LayoutError`. `glanceable` uses only this — so any private
+  plugin (or a 1:1 recreation of `glanceable`) can be built without core internals.
 - **Discovery (`plugins.py`)** serves both plugin kinds by identical logic. It imports two bundled
   roots (always) — `kindle_dash_gen.render.builtins` for layouts and `kindle_dash_gen.sources.builtins`
   for sources, each behind its own idempotency flag — plus an optional local directory named by
@@ -130,44 +137,10 @@ height, fonts: Fonts, units)` + `render(data) -> Image`.
   subpackage owning its `assets/icons/*.png` (chosen by `format.weather_icon()`, pasted with alpha).
   See `docs/plugins.md` for the full contract.
 
-### Prompt — llm backend (render/prompt.py)
-
-`render_prompt(data, *, units, width, height, aspect, template)` resolves the template (a
-bundled name under `assets/dashboard_prompts/*.j2`, else a filesystem path) and renders it.
-
-**Public template context contract** (custom user templates depend on this — treat as an API).
-`_build_context` adapts the source-keyed `data.source_data` back into these flat variables
-(`weather` = `source_data.get(WeatherReport)`, `boards` = the `MtaBoards.boards` if present else
-`[]`), so the move to source plugins leaves the contract — and any custom template — unchanged:
-
-- Variables: `weather` (`WeatherReport | None`), `boards` (`list[StationBoard]`), `units`
-  (`"us"|"si"|"both"`), `width`, `height`, `aspect` (e.g. `"4:3"`), `now` (= `generated_at`).
-- Helper globals (same `format.py` functions the debug CLIs use, so formatting has one source
-  of truth): `format_reading`, `format_apparent`, `format_temp`, `format_wind`, `format_eta`.
-
-Jinja env: `autoescape=False`, `trim_blocks=True`, `lstrip_blocks=True`. The prompt is plain
-text describing the dashboard layout to the image model; the `dense.j2` template instructs the
-model not to render its own field labels, only the data values.
-
-### OpenRouter (render/openrouter.py)
-
-`OpenRouterClient(model, api_key=None)` talks to the Unified Image API at
-`https://openrouter.ai/api/v1`.
-
-- **Capability discovery:** `supported_parameters` (a `cached_property`) fetches
-  `/images/models/{model}/endpoints` and merges `supported_parameters` across endpoints —
-  enum `values` are unioned (order-preserved, deduped). No auth needed for this or for aspect
-  resolution; only `generate()` requires the key.
-- `resolve_aspect_ratio(w, h, override)` returns `override` if the model supports it, else the
-  supported ratio nearest to `w/h` (`nearest_aspect_ratio`). An unsupported override fails fast
-  with the valid list.
-- `generate(prompt, *, aspect_ratio, resolution)` POSTs to `/images`, validates a
-  `resolution` override against the model's enum first, and base64-decodes `data[0].b64_json`
-  into raw image bytes. All failures raise `OpenRouterError`.
-
 ### Post-process (render/postprocess.py)
 
-`post_process(png, *, width, height, gray_levels, method)`, in order:
+`post_process(image, *, width, height, gray_levels, method, rotate)` takes the layout's raw Pillow
+`Image` (no PNG round-trip) and, in order:
 
 1. `convert("L")` → grayscale.
 2. `_fit` to exactly `(width, height)` by `method`:
@@ -176,16 +149,17 @@ model not to render its own field labels, only the data values.
    - `pad` — `ImageOps.pad` fit + white (255) e-ink bars.
 3. `_quantize_lut` — a 256-entry LUT snapping each value to the nearest of `gray_levels`
    evenly-spaced grays (models the Voyage's fixed hardware palette; requires `levels >= 2`).
+4. Optionally `ROTATE_90` (for a physically rotated device).
 
-Returns PNG bytes. Defaults target the Kindle Voyage: 1072×1448 portrait, 16 gray levels.
+Returns PNG bytes. Defaults target the Kindle Voyage: 1072×1448 portrait, 16 gray levels. Since the
+layout already draws at exact size, the fit step is effectively a no-op and only quantization
+changes the pixels.
 
 ## Configuration (config.py)
 
 `load_config(path)` reads TOML via `tomllib` and validates into `Config`. Every model uses
 `extra="forbid"`. Notable pieces:
 
-- `Secret` — exactly one of `value` / `value_from_cmd` (enforced by a model validator);
-  `resolve()` returns the literal or runs the shell command and returns stripped stdout.
 - `sources: dict[str, dict[str, Any]]` — the raw `[sources.<name>]` tables. `Config` does **not**
   validate their contents; after plugin discovery, `build_sources()` validates each slice against
   its plugin's own `Config` model (the `nws` plugin's `NwsConfig`: `latitude`, `longitude`,
@@ -193,18 +167,19 @@ Returns PNG bytes. Defaults target the Kindle Voyage: 1072×1448 portrait, 16 gr
   `Station`/`Platform` models also live in that plugin). An unknown source name or key fails fast
   there. Zero sources is valid. The old top-level `[location]`, `[weather]`, `[stations.*]` sections
   are gone.
-- `Dashboard` — output `path`, `backend` (`pillow`/`llm`), `weather_temp_units` (`us`/`si`/`both`,
-  the display-units choice both backends use), pillow `layout` / `font`, pixel `width`/`height`,
-  `gray_levels`, `post_process_method`, `rotate`, and optional `aspect_ratio` / `resolution`
-  overrides.
+- `Dashboard` — the **output spec** only: `layout` (name, default `"glanceable"`), `output_path`,
+  pixel `width`/`height`, `gray_levels`, `post_process_method`, `rotate`, plus a raw
+  `layout_config: dict[str, Any]`. `Config` does **not** validate `layout_config`; `validate_layout`
+  checks it against the named layout's own `Config` after discovery. Render knobs (`font`,
+  `weather_temp_units`) live in `layout_config`, not on the dashboard.
 - `plugins_path` — optional absolute dir of private layout and/or source plugins.
 - `Schedule.interval_minutes` (default 5).
 
 ## Design Decisions
 
 - **Presentation stays out of the domain models** — `DashboardData` and the source models
-  carry no formatting; that lives in `format.py` and the templates.
-- **One source of truth for formatting** — the debug CLIs and the prompt template call the
-  same `format.py` helpers, so what you preview matches what the model is told.
-- **Fail fast on explicit overrides, degrade gracefully on source outages** — a bad
-  `aspect_ratio` override errors immediately, but a dead weather API just drops a panel.
+  carry no formatting; that lives in `format.py` and the layouts.
+- **One source of truth for formatting** — the debug CLIs and the layouts call the same
+  `format.py` helpers (re-exported through `render/toolkit.py`), so formatting has one home.
+- **Fail fast on explicit config, degrade gracefully on source outages** — a bad `layout_config`
+  or source key errors immediately, but a dead weather API just drops a panel.

@@ -10,13 +10,10 @@ from PIL import Image
 from kindle_dash_gen.render.postprocess import post_process
 
 
-def _gradient_png(width: int, height: int, vmax: int = 128) -> bytes:
-    """An RGB horizontal gray gradient (0..vmax, never pure white) as PNG bytes."""
+def _gradient(width: int, height: int, vmax: int = 128) -> Image.Image:
+    """An RGB horizontal gray gradient (0..vmax, never pure white)."""
     row = bytes(c for x in range(width) for c in (round(vmax * x / (width - 1)),) * 3)
-    img = Image.frombytes("RGB", (width, height), row * height)
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    return buffer.getvalue()
+    return Image.frombytes("RGB", (width, height), row * height)
 
 
 def _open(png: bytes) -> Image.Image:
@@ -26,7 +23,7 @@ def _open(png: bytes) -> Image.Image:
 def test_resize_produces_exact_dimensions_and_grayscale() -> None:
     out = _open(
         post_process(
-            _gradient_png(64, 48),
+            _gradient(64, 48),
             width=32,
             height=48,
             gray_levels=16,
@@ -43,7 +40,7 @@ def test_crop_covers_without_introducing_white_bars() -> None:
     # so no white padding is introduced (the gradient tops out well below 255).
     out = _open(
         post_process(
-            _gradient_png(64, 48), width=32, height=48, gray_levels=16, method="crop", rotate=False
+            _gradient(64, 48), width=32, height=48, gray_levels=16, method="crop", rotate=False
         )
     )
     assert out.size == (32, 48)
@@ -55,7 +52,7 @@ def test_pad_adds_white_bars() -> None:
     # leftover strip with white e-ink background.
     out = _open(
         post_process(
-            _gradient_png(64, 48), width=32, height=48, gray_levels=16, method="pad", rotate=False
+            _gradient(64, 48), width=32, height=48, gray_levels=16, method="pad", rotate=False
         )
     )
     assert out.size == (32, 48)
@@ -68,7 +65,7 @@ def test_gray_levels_snaps_to_evenly_spaced_palette() -> None:
     # endpoints — locks the LUT's values, not just how many there are.
     out = _open(
         post_process(
-            _gradient_png(256, 4, vmax=255),
+            _gradient(256, 4, vmax=255),
             width=256,
             height=4,
             gray_levels=16,
@@ -83,7 +80,7 @@ def test_gray_levels_snaps_to_evenly_spaced_palette() -> None:
 def test_gray_levels_below_two_raises() -> None:
     with pytest.raises(ValueError):
         post_process(
-            _gradient_png(64, 48), width=32, height=48, gray_levels=1, method="resize", rotate=False
+            _gradient(64, 48), width=32, height=48, gray_levels=1, method="resize", rotate=False
         )
 
 
@@ -92,7 +89,7 @@ def test_rotate_swaps_dimensions_90_degrees() -> None:
     # side for a physically rotated device.
     out = _open(
         post_process(
-            _gradient_png(64, 48), width=32, height=48, gray_levels=16, method="resize", rotate=True
+            _gradient(64, 48), width=32, height=48, gray_levels=16, method="resize", rotate=True
         )
     )
     assert out.size == (48, 32)

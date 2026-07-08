@@ -28,7 +28,7 @@ user_agent = "test-agent (test@example.com)"
   stop_id = "R20"
 
 [dashboards.main]
-path = "./out/dashboard.png"
+output_path = "./out/dashboard.png"
 width = 100
 height = 140
 """
@@ -38,6 +38,18 @@ def _write_config(tmp_path: Path) -> Path:
     path = tmp_path / "config.toml"
     path.write_text(CONFIG)
     return path
+
+
+def _two_dashboard_text(first_path: Path, second_path: Path) -> str:
+    """CONFIG with `main` pointed at first_path plus a second dashboard at second_path."""
+    main = CONFIG.replace(
+        'output_path = "./out/dashboard.png"', f'output_path = "{first_path.as_posix()}"'
+    )
+    second = (
+        f'[dashboards.second]\noutput_path = "{second_path.as_posix()}"\n'
+        "width = 100\nheight = 140\n"
+    )
+    return f"{main}\n{second}"
 
 
 class _FakeNwsClient:
@@ -95,12 +107,8 @@ def test_dashboard_render_renders_all_dashboards_from_one_gather(tmp_path, monke
 
     first_path = tmp_path / "out" / "first.png"
     second_path = tmp_path / "out" / "second.png"
-    text = (
-        CONFIG.replace('path = "./out/dashboard.png"', f'path = "{first_path.as_posix()}"')
-        + f'\n[dashboards.second]\npath = "{second_path.as_posix()}"\nwidth = 100\nheight = 140\n'
-    )
     config_path = tmp_path / "config.toml"
-    config_path.write_text(text)
+    config_path.write_text(_two_dashboard_text(first_path, second_path))
 
     result = runner.invoke(app, ["--config", str(config_path), "dashboard", "render"])
 
@@ -116,12 +124,8 @@ def test_dashboard_render_name_selects_a_subset(tmp_path, monkeypatch) -> None:
 
     first_path = tmp_path / "out" / "first.png"
     second_path = tmp_path / "out" / "second.png"
-    text = (
-        CONFIG.replace('path = "./out/dashboard.png"', f'path = "{first_path.as_posix()}"')
-        + f'\n[dashboards.second]\npath = "{second_path.as_posix()}"\nwidth = 100\nheight = 140\n'
-    )
     config_path = tmp_path / "config.toml"
-    config_path.write_text(text)
+    config_path.write_text(_two_dashboard_text(first_path, second_path))
 
     result = runner.invoke(
         app, ["--config", str(config_path), "dashboard", "render", "--name", "second"]
@@ -210,7 +214,7 @@ def test_run_one_shot_exits_zero_when_all_sources_down(tmp_path, monkeypatch) ->
 
 
 def _two_dashboard_config(tmp_path: Path) -> Path:
-    text = CONFIG + '\n[dashboards.second]\npath = "./out/second.png"\n'
+    text = CONFIG + '\n[dashboards.second]\noutput_path = "./out/second.png"\n'
     path = tmp_path / "config.toml"
     path.write_text(text)
     return path
@@ -256,7 +260,7 @@ longitude = -73.9857
 user_agent = "test-agent (test@example.com)"
 
 [dashboards.main]
-path = "./out/dash.png"
+output_path = "./out/dash.png"
 """
 
 MTA_ONLY = """
@@ -267,7 +271,7 @@ MTA_ONLY = """
   stop_id = "R20"
 
 [dashboards.main]
-path = "./out/dash.png"
+output_path = "./out/dash.png"
 """
 
 
@@ -351,4 +355,14 @@ def test_mta_get_current_prints_arrivals(tmp_path, monkeypatch) -> None:
 
 def test_mta_get_current_errors_when_mta_not_configured(tmp_path) -> None:
     result = runner.invoke(app, ["--config", str(_write(tmp_path, NWS_ONLY)), "mta", "get-current"])
+    assert result.exit_code != 0
+
+
+def test_bad_layout_config_key_fails_fast(tmp_path) -> None:
+    # _config eagerly validates each dashboard's layout_config against its layout, so a bad key
+    # fails the command up front (before any fetch/render), not mid-run.
+    text = CONFIG + "\n[dashboards.main.layout_config]\nbogus = 1\n"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(text)
+    result = runner.invoke(app, ["--config", str(config_path), "run", "--one-shot"])
     assert result.exit_code != 0

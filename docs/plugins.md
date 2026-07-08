@@ -1,6 +1,6 @@
 # Render layout plugins
 
-The pillow render backend draws the dashboard with a named **layout**. Layouts are plugins: the
+The dashboard is drawn locally with Pillow by a named **layout**. Layouts are plugins: the
 registry starts empty and every layout — including the bundled `glanceable` — registers itself the
 same way. There is no privileged builtin. You can add your own layout locally (e.g. a home-specific
 design) without touching the app, and a private plugin has access to the exact same API the bundled
@@ -27,52 +27,74 @@ plugins_path = "/home/you/kindle-dash-gen-nyc/kindle_dash_gen_nyc_plugins"
 
 ## The contract
 
-A plugin is a **subpackage** of a plugin directory that, on import, calls `register_layout`:
+A plugin is a **subpackage** of a plugin directory that, on import, calls `register_layout`. A
+layout **owns its config**: it declares a pydantic `Config` model (keep `extra="forbid"`) that
+validates the dashboard's `[dashboards.<name>.layout_config]` table — the same way a source owns its
+`[sources.<name>]` table.
 
 ```python
 # <plugins_dir>/my_layout/__init__.py
-from kindle_dash_gen.render.layout import register_layout
-from kindle_dash_gen.render.toolkit import DEFAULT_FONT, INK, PAPER, Fonts, fit_font, load_asset_image
 from PIL import Image, ImageDraw
+from pydantic import BaseModel, ConfigDict
+
+from kindle_dash_gen.render.layout import Layout, register_layout
+from kindle_dash_gen.render.toolkit import DEFAULT_FONT, INK, PAPER, Fonts
 
 
-class MyLayout:
-    # Constructed with the panel size, the configured font family (or None), and display units.
-    def __init__(self, width: int, height: int, font: str | None, units: str) -> None:
-        # font is None when the dashboard didn't set one — pick your own default for that case.
-        self.fonts = Fonts(font if font is not None else DEFAULT_FONT)
+class MyLayoutConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # reject unknown keys in [dashboards.x.layout_config]
+
+    font: str | None = None
+    weather_temp_units: str = "us"
+
+
+class MyLayout(Layout[MyLayoutConfig]):
+    Config = MyLayoutConfig  # the dispatch validates layout_config against this before constructing
+
+    # Constructed with the validated config plus the dashboard's output resolution (keyword-only).
+    def __init__(self, config: MyLayoutConfig, *, width: int, height: int) -> None:
+        self.fonts = Fonts(config.font if config.font is not None else DEFAULT_FONT)
         self.img = Image.new("L", (width, height), PAPER)
         self.d = ImageDraw.Draw(self.img)
 
-    # Draw DashboardData and return an "L"-mode image of the panel size.
+    # Draw DashboardData and return a raw "L"-mode image; the pipeline post-processes + writes it.
     def render(self, data) -> Image.Image:
-        self.d.text((20, 20), "hello", font=..., fill=INK)
+        self.d.text((20, 20), "hello", font=self.fonts.get(40, "Bold"), fill=INK)
         return self.img
 
 
 register_layout("my_layout", MyLayout)
 ```
 
-Then select it per dashboard:
+Then select it per dashboard, and configure it under `layout_config`:
 
 ```toml
 [dashboards.main]
-backend = "pillow"
-layout  = "my_layout"
+layout = "my_layout"
+output_path = "./out/dashboard.png"
+width = 1072
+height = 1448
+
+[dashboards.main.layout_config]   # validated by MyLayoutConfig
+font = "Futura"
+weather_temp_units = "both"
 ```
 
 ## The `Layout` protocol
 
 A layout class satisfies `kindle_dash_gen.render.layout.Layout`:
 
-- `__init__(self, width: int, height: int, font: str | None, units: str)` — `font` is the
-  dashboard's configured font family, or `None` when unspecified. Resolve it into `Fonts` yourself,
-  supplying your own default for the `None` case (e.g. `Fonts(font or DEFAULT_FONT)`, or per-role
-  defaults like the bundled `home_mta_map`, which uses Futura for line letters and Helvetica Neue
-  for everything else).
-- `render(self, data: DashboardData) -> PIL.Image.Image` — an `"L"`-mode (8-bit grayscale) image
-  of exactly `width` × `height`. It is post-processed (quantized to the device gray levels) by the
-  pipeline; a pillow layout is already the exact size, so the fit step is a no-op.
+- `Config: ClassVar[type[BaseModel]]` — the pydantic model for this layout's `layout_config` table.
+  Keep `model_config = ConfigDict(extra="forbid")` so unknown keys are rejected. The dispatch
+  validates the raw table against `Config` (a bad table fails fast at config load), then constructs
+  the layout with the validated instance.
+- `__init__(self, config, *, width, height)` — `config` is the validated `Config` instance;
+  `width`/`height` are the dashboard's output resolution (the default canvas size). Declaring the
+  class as `Layout[MyLayoutConfig]` types `config` as `MyLayoutConfig`.
+- `render(self, data: DashboardData) -> PIL.Image.Image` — a raw `"L"`-mode (8-bit grayscale) image.
+  The pipeline post-processes it (grayscale, fit to `width`×`height`, quantize to the device gray
+  levels) and writes it to the dashboard's `output_path`; drawing at the exact size makes the fit a
+  no-op.
 
 `DashboardData` (`kindle_dash_gen.models`) carries `generated_at: datetime` and `source_data:
 dict[type, Any]`, which maps each source's produced data class to its instance. Look up what you

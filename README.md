@@ -38,7 +38,7 @@ uv run python -m kindle_dash_gen --config config.toml run              # loop ev
 
 `run` is the full pipeline: it gathers weather + subway data **once**, then renders every
 configured dashboard, post-processes each for the Kindle, and writes it to that dashboard's
-`[dashboards.<name>].path`. Configure one or more outputs as named tables (`[dashboards.main]`,
+`[dashboards.<name>].output_path`. Configure one or more outputs as named tables (`[dashboards.main]`,
 `[dashboards.landscape]`, …); a single fetch feeds them all. Without a flag it loops every
 `[schedule].interval_minutes` (Ctrl-C exits cleanly, and a failed iteration is logged and retried
 at the next interval); `--one-shot` runs a single iteration and exits non-zero if any dashboard

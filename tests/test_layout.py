@@ -8,10 +8,10 @@ it depends on the system font and is an iterating visual concern.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from io import BytesIO
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 from kindle_dash_gen.models import (
     DashboardData,
@@ -97,9 +97,11 @@ def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     return DashboardData(generated_at=NOW, source_data=source_data)
 
 
+_CONFIG = {"font": "Adwaita Sans", "weather_temp_units": "both"}
+
+
 def _render(data: DashboardData) -> Image.Image:
-    png = render(data, units="both", width=W, height=H, layout="glanceable", font="Adwaita Sans")
-    return Image.open(BytesIO(png))
+    return render(data, width=W, height=H, layout="glanceable", layout_config=_CONFIG)
 
 
 def test_renders_kindle_sized_grayscale() -> None:
@@ -110,9 +112,9 @@ def test_renders_kindle_sized_grayscale() -> None:
 
 def test_render_is_deterministic() -> None:
     data = _dashboard()
-    first = render(data, units="both", width=W, height=H, layout="glanceable", font="Adwaita Sans")
-    second = render(data, units="both", width=W, height=H, layout="glanceable", font="Adwaita Sans")
-    assert first == second
+    first = _render(data)
+    second = _render(data)
+    assert first.tobytes() == second.tobytes()
 
 
 def test_renders_without_weather() -> None:
@@ -130,13 +132,19 @@ def test_renders_without_boards() -> None:
 def test_font_none_falls_back_to_default() -> None:
     # An unspecified font (None) resolves to the layout's default (glanceable's DEFAULT_FONT), so
     # the render still succeeds at full size rather than failing to resolve a font.
-    png = render(_dashboard(), units="both", width=W, height=H, layout="glanceable", font=None)
-    assert Image.open(BytesIO(png)).size == (W, H)
+    img = render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={})
+    assert img.size == (W, H)
 
 
 def test_unknown_layout_raises() -> None:
     with pytest.raises(LayoutError):
-        render(_dashboard(), units="us", width=W, height=H, layout="nope", font="Adwaita Sans")
+        render(_dashboard(), width=W, height=H, layout="nope", layout_config={})
+
+
+def test_unknown_layout_config_key_is_rejected() -> None:
+    # A layout owns its config (extra="forbid"), so an unknown layout_config key fails fast.
+    with pytest.raises(ValidationError):
+        render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={"bogus": 1})
 
 
 def test_unresolvable_font_raises() -> None:
@@ -145,11 +153,10 @@ def test_unresolvable_font_raises() -> None:
     with pytest.raises(LayoutError):
         render(
             _dashboard(),
-            units="us",
             width=W,
             height=H,
             layout="glanceable",
-            font="No Such Font Family 9000",
+            layout_config={"font": "No Such Font Family 9000"},
         )
 
 

@@ -64,14 +64,13 @@ hourly_hours = 4       # number of upcoming hourly forecasts to include
 # One or more output dashboards, each keyed by a name ([dashboards.<name>]). A single run gathers
 # every source's data once and renders every dashboard from it, writing each to its own path.
 # The name appears in the run's log lines. At least one dashboard is required.
+#
+# A dashboard owns the *output*: which layout draws it, where to write it, and the Kindle output
+# spec. The *layout* owns how it draws — its own config lives in [dashboards.<name>.layout_config]
+# (validated by the layout; see docs/plugins.md).
 [dashboards.main]
-path = "./out/dashboard.png"
-# Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
-weather_temp_units = "both"
-layout = "glanceable"      # bundled layout name (see docs/plugins.md)
-# font: system font family (fontconfig). Omit to let the layout choose its own default (glanceable
-# uses "Adwaita Sans"). A set value overrides the layout's default for every glyph.
-font = "Adwaita Sans"
+layout = "glanceable"              # bundled layout name (see docs/plugins.md)
+output_path = "./out/dashboard.png"
 width = 1072               # Kindle Voyage, portrait (native orientation)
 height = 1448
 gray_levels = 16           # Voyage 4-bit grayscale
@@ -83,10 +82,19 @@ gray_levels = 16           # Voyage 4-bit grayscale
 post_process_method = "resize"
 # rotate = true             # rotate the final image 90° before writing (for a physically rotated device)
 
+# The glanceable layout's own config (its schema — unknown keys are rejected).
+[dashboards.main.layout_config]
+# Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
+weather_temp_units = "both"
+# font: system font family (fontconfig). Omit to let the layout choose its own default (glanceable
+# uses "Adwaita Sans"). A set value overrides the layout's default for every glyph.
+font = "Adwaita Sans"
+
 # A second dashboard rendered from the same data to a different path (e.g. a second device, or a
 # landscape variant). Delete this block if you only need one output.
 # [dashboards.landscape]
-# path = "./out/dashboard-landscape.png"
+# layout = "glanceable"
+# output_path = "./out/dashboard-landscape.png"
 # width = 1448
 # height = 1072
 

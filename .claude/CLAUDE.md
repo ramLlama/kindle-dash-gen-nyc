@@ -3,11 +3,10 @@
 ## What This Project Does
 
 A Python CLI that periodically generates a Kindle e-ink dashboard image for NYC. It pulls the
-local NWS weather forecast plus real-time MTA subway arrivals, renders the whole dashboard via one
-of two backends (a deterministic local **pillow** layout, the default; or an **llm** OpenRouter
-image model), post-processes the resulting PNG for a Kindle Voyage (grayscale, exact pixel
-dimensions, 16 hardware gray levels), and writes it to a configured path for syncing to the
-device. Intended to run unattended on an interval (e.g. every 5 minutes).
+local NWS weather forecast plus real-time MTA subway arrivals, renders the whole dashboard with a
+deterministic local **pillow** layout, post-processes the resulting PNG for a Kindle Voyage
+(grayscale, exact pixel dimensions, 16 hardware gray levels), and writes it to a configured path
+for syncing to the device. Intended to run unattended on an interval (e.g. every 5 minutes).
 
 ## Tech Stack
 
@@ -15,12 +14,11 @@ device. Intended to run unattended on an interval (e.g. every 5 minutes).
 - **uv** for env/deps. The project is `package = false` — run in place, never installed.
 - **typer** `0.26.*` — CLI framework
 - **pydantic** `2.*` — config validation (`extra="forbid"` on every model)
-- **niquests** `3.*` — HTTP client (NWS + OpenRouter); `niquests-mock` in tests
+- **niquests** `3.*` — HTTP client (NWS); `niquests-mock` in tests
 - **nyct-gtfs** `2.*` — MTA GTFS-realtime feed parsing
-- **jinja2** `3.*` — prompt templating (llm backend)
-- **pillow** `12.*` — image post-processing and the pillow rendering backend
-- **fontconfig** (`fc-match`, system tool) — the pillow backend resolves a font family name to a
-  file; required at runtime when `backend = "pillow"`
+- **pillow** `12.*` — the rendering layout and image post-processing
+- **fontconfig** (`fc-match`, system tool) — a layout resolves a font family name to a file;
+  required at runtime
 - **pytest** `9.*`, **ruff** `0.15.*` — test + lint gates
 
 ## Repository Structure
@@ -29,8 +27,8 @@ device. Intended to run unattended on an interval (e.g. every 5 minutes).
 kindle_dash_gen/
   __main__.py          # `python -m kindle_dash_gen` entry -> cli.run()
   cli.py               # typer app: version, run, weather, mta group, dashboard group
-  config.py            # TOML -> pydantic Config; Secret (value | value_from_cmd)
-  pipeline.py          # gather -> build_prompt -> render -> post_process -> atomic write
+  config.py            # TOML -> pydantic Config; Dashboard (output spec + layout_config)
+  pipeline.py          # gather -> layout.render -> post_process -> atomic write
   format.py            # display formatters (temp/reading/apparent/wind/eta); SI -> display
   models/              # frozen dataclasses (domain models, no presentation)
     weather.py         # Temperature, HourlyForecast, WeatherReport
@@ -42,17 +40,14 @@ kindle_dash_gen/
     builtins/          # bundled source plugins (discovered, not special-cased)
       nws/             # "nws" source: NwsClient + NwsConfig -> WeatherReport
       mta/             # "mta" source: MtaClient + MtaConfig (owns Platform/Station) -> MtaBoards
-  render/              # turn data into a Kindle-ready PNG (two backends)
-    prompt.py          # llm backend: render_prompt() Jinja2, public template context contract
-    openrouter.py      # llm backend: OpenRouterClient, Unified Image API, capability discovery
-    layout.py          # pillow backend: Layout protocol, register_layout, render() dispatch
-    toolkit.py         # pillow backend: public plugin API (Fonts, INK/PAPER, fit_font, assets)
+  render/              # turn data into a Kindle-ready PNG (pillow layout + post-process)
+    layout.py          # Layout protocol (owns its Config), register/validate/build_layout, render()
+    toolkit.py         # layout public plugin API (Fonts, INK/PAPER, fit_font, assets, format helpers)
     builtins/          # bundled layout plugins (discovered, not special-cased)
-      glanceable/      # the default layout as a self-contained plugin (owns its assets/icons/)
-    postprocess.py     # post_process(): grayscale, fit, quantize (Pillow) — shared by both
+      glanceable/      # the default layout as a self-contained plugin (owns GlanceableConfig + assets/icons/)
+    postprocess.py     # post_process(): grayscale, fit, quantize (Pillow); Image in, PNG bytes out
   plugins.py           # plugin discovery: bundled layout + source roots + optional local plugins_path
   assets/
-    dashboard_prompts/*.j2       # bundled prompt templates ("dense", "glanceable") — llm backend
     mta/stations.csv             # bundled station lookup (for `mta list-stations`)
 tests/                 # pytest, one file per module; HTTP mocked with niquests-mock
 config.example.toml    # copy to config.toml (gitignored) and edit
@@ -81,17 +76,16 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
 
 Linear pipeline, wired in `pipeline.py`:
 `gather()` (iterate the discovered source plugins **once**, isolating each) → for each configured
-`[dashboards.<name>]`: `render_raw()` (dispatch on that dashboard's `backend`) → `post_process()`
-(grayscale, fit, quantize) → atomic write to the dashboard's `path`. `run_once()` returns a
-`RunResult(written, failed)`; one dashboard's render failure is isolated (logged, others proceed).
-`render_raw()` branches: the **pillow** backend calls `layout.render()` (draws
-`DashboardData` at native size); the **llm** backend does `build_prompt()` →
-`OpenRouterClient.generate()`. Both return raw PNG bytes, and `post_process()` is shared (for
-pillow the fit step is a no-op since it's already exact-sized, so only quantization applies). The
-`dashboard` CLI subcommands expose each step in isolation for debugging.
+`[dashboards.<name>]`: `render_raw()` (`layout.render()` builds the dashboard's layout from its
+`layout_config` and draws `DashboardData` at native size, returning a raw Pillow `Image`) →
+`post_process()` (grayscale, fit, quantize — takes the `Image`, returns PNG bytes) → atomic write
+to the dashboard's `output_path`. `run_once()` returns a `RunResult(written, failed)`; one
+dashboard's render failure is isolated (logged, others proceed). The fit step is effectively a
+no-op since the layout already draws at exact size, so only quantization matters. The `dashboard`
+CLI subcommands expose each step in isolation for debugging.
 
 See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, MTA feed
-deduplication, and the OpenRouter capability-discovery details.
+deduplication, and the layout/post-process details.
 
 ## Development Workflow
 
@@ -101,7 +95,7 @@ cp config.example.toml config.toml     # edit; config.toml is gitignored
 
 # Run in place (NOT installed — always via -m):
 uv run python -m kindle_dash_gen --help
-uv run python -m kindle_dash_gen --config config.toml dashboard preview-prompt  # no API spend
+uv run python -m kindle_dash_gen --config config.toml dashboard render out.png  # render only
 uv run python -m kindle_dash_gen --config config.toml run --one-shot            # one iteration
 uv run python -m kindle_dash_gen --config config.toml run                       # loop
 
@@ -118,28 +112,29 @@ subcommand loads it on demand via `_config(ctx)`.
 - **SI internally, round at display.** All weather data is kept in SI (°C, km/h) at full
   precision through the models and sources. Conversion and rounding happen only in `format.py`
   at output time. Do not round or convert units inside sources or models.
-- **Secrets never come from environment variables.** The OpenRouter API key is a `Secret`:
-  either an inline `{ value = "..." }` or `{ value_from_cmd = "..." }` whose stdout is the key.
-  This is a deliberate design choice, not an oversight — do not add env-var fallbacks.
 - **Multiple dashboards, one fetch.** Config has `dashboards: dict[str, Dashboard]` (named
   `[dashboards.<name>]` tables). `gather()` runs once and every dashboard renders from that shared
-  data to its own `path`. `[openrouter]` is required only if *some* dashboard uses the llm backend.
-- **Two render backends.** Each dashboard's `backend` selects `"pillow"` (default: deterministic
-  local layout; free, offline, exact — never garbles data) or `"llm"` (OpenRouter image model).
-  `[openrouter]` is optional and only required for the llm backend (a `Config` validator enforces
-  this). The pillow backend resolves its `font` family via fontconfig (`fc-match`); a missing
-  font/asset raises `LayoutError`.
-- **Both layouts and sources are plugins (no special builtins).** `plugins.load_plugins()`
-  discovers two kinds by identical logic, each from a bundled root plus the optional shared local
-  `plugins_path` dir (which hosts both kinds). Registries start empty:
+  data to its own `output_path`.
+- **One renderer: the pillow layout.** Every dashboard renders deterministically via a local
+  pillow **layout** (free, offline, exact — never garbles data). There is no backend concept and no
+  dispatch: a dashboard just names a `layout`. A layout resolves its `font` family via fontconfig
+  (`fc-match`); a missing font/asset raises `LayoutError`.
+- **Both layouts and sources are plugins that own their config (no special builtins).**
+  `plugins.load_plugins()` discovers two kinds by identical logic, each from a bundled root plus the
+  optional shared local `plugins_path` dir (which hosts both kinds). Registries start empty, and
+  each plugin declares a `Config: ClassVar[type[BaseModel]]` (all `extra="forbid"`) validated from
+  its own config table — layouts mirror sources here:
   - **Layouts** register via `register_layout` at import, bundled root
     `kindle_dash_gen.render.builtins` (the `glanceable` layout lives at `render/builtins/glanceable/`).
-    Build on `render/toolkit.py` (`Fonts`, `INK`/`PAPER`, `fit_font`, `load_asset_image`,
-    `LayoutError`). See `docs/plugins.md`.
+    The `Layout` protocol is `Config` + `__init__(config, *, width, height)` +
+    `render(data) -> PIL.Image.Image`. `build_layout`/`validate_layout` (in `render/layout.py`)
+    validate the `[dashboards.<name>.layout_config]` table against the layout's `Config`, mirroring
+    `build_sources`. Build on `render/toolkit.py` (`Fonts`, `INK`/`PAPER`, `fit_font`,
+    `load_asset_image`, `LayoutError`). See `docs/plugins.md`.
   - **Sources** register via `register_source` at import, bundled root
     `kindle_dash_gen.sources.builtins` (the `nws` and `mta` sources). A source is a `Source`
-    protocol class with a `Config: ClassVar[type[BaseModel]]` and a `fetch(now)`; build on
-    `sources/toolkit.py` (`SourceError`). See `docs/sources.md`.
+    protocol class with a `Config` and a `fetch(now)`; `build_sources` validates each
+    `[sources.<name>]` table. Build on `sources/toolkit.py` (`SourceError`). See `docs/sources.md`.
 
   Do **not** re-add a hardcoded builtin dict for either kind.
 - **Per-source isolation.** In `gather()`, each source's `SourceError` (subclasses: `WeatherError`,
@@ -154,21 +149,24 @@ subcommand loads it on demand via `_config(ctx)`.
 - **protobuf override.** `nyct-gtfs` hard-pins `protobuf==4.25.3`, which crashes on Python 3.14.
   `pyproject.toml` forces `protobuf>=6` via `[tool.uv] override-dependencies`. See the comment
   there and the upstream issue link before touching MTA deps.
-- **OpenRouter capabilities are discovered at runtime**, not hardcoded — aspect ratios and
-  resolutions are queried per model from its `/endpoints` listing, unioned across endpoints. An
-  unsupported `aspect_ratio`/`resolution` override fails fast with the valid values listed.
-- **Config is strict, and source config is validated per-plugin.** Every pydantic model sets
-  `extra="forbid"`; an unknown TOML key is a validation error. Top-level `Config` no longer defines
-  the source sections — it holds `sources: dict[str, dict[str, Any]]` (raw `[sources.<name>]`
-  tables). After plugin discovery, `build_sources()` validates each slice against its plugin's own
-  `Config` model (each still `extra="forbid"`), so unknown/malformed source keys fail fast there,
-  not statically in `Config`. An unknown source *name* also fails fast. The CLI `_config()` runs
-  `build_sources()` eagerly so a bad source is caught before any fetch. Zero sources is valid
-  (every render then legitimately skips). Display temperature units are now `weather_temp_units`
-  on each `[dashboards.<name>]` (both backends use it), not a weather-source setting.
-- **Milestone-per-commit.** History is built as discrete milestones (M6 = the pillow rendering
-  backend; the latest reworks data sources into discovered plugins, mirroring the layout system),
-  one feature/refactor per commit, Conventional Commits style.
+- **Config is strict, and plugin config is validated per-plugin.** Every pydantic model sets
+  `extra="forbid"`; an unknown TOML key is a validation error. Top-level `Config` does not define
+  the source or layout schemas — it holds `sources: dict[str, dict[str, Any]]` (raw
+  `[sources.<name>]` tables), and each `Dashboard` holds a raw `layout_config: dict[str, Any]`.
+  After plugin discovery, `build_sources()` validates each source slice and `validate_layout()`
+  each dashboard's `layout_config` against the respective plugin's own `Config` (each still
+  `extra="forbid"`), so unknown/malformed keys fail fast there, not statically in `Config`. An
+  unknown source *name* or layout *name* also fails fast. The CLI `_config()` runs both eagerly so a
+  bad source or layout_config is caught before any fetch. Zero sources is valid (every render then
+  legitimately skips). A `Dashboard` owns the **output spec** — `layout` (name), `output_path`,
+  `width`, `height`, `gray_levels`, `post_process_method`, `rotate` — while the layout owns **how it
+  draws**: render knobs like the font and display temperature units live in `layout_config` (the
+  bundled `glanceable`'s `GlanceableConfig` has `font` and `weather_temp_units`), not on the
+  dashboard.
+- **Milestone-per-commit.** History is built as discrete milestones (data sources reworked into
+  discovered plugins; the latest removed the LLM/OpenRouter backend entirely and made layouts own
+  their config, mirroring the source plugin system), one feature/refactor per commit, Conventional
+  Commits style.
 
 ## Context Files
 

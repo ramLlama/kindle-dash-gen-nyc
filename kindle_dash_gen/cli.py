@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
+from PIL import Image
 
 from . import __version__, pipeline, plugins
 from .config import Config, Dashboard, load_config
 from .format import format_eta, format_reading, format_temp, format_wind
 from .models import Direction
+from .render.layout import validate_layout
 from .render.postprocess import post_process
 from .sources.registry import build_sources
 
@@ -46,6 +48,8 @@ def _config(ctx: typer.Context) -> Config:
     cfg = load_config(ctx.obj)
     plugins.load_plugins(cfg.plugins_path)
     build_sources(cfg.sources)  # validate each [sources.<name>] against its plugin now, not mid-run
+    for dash in cfg.dashboards.values():  # and each dashboard's layout_config against its layout
+        validate_layout(dash.layout, dash.layout_config)
     return cfg
 
 
@@ -199,8 +203,8 @@ def dashboard_render(
 ) -> None:
     """Fetch live data once and render every dashboard's PNG via its pillow layout.
 
-    Writes the raw rendered image (before Kindle post-processing) to each dashboard's path; run
-    ``dashboard post-process`` to massage it for the device. Restrict to a subset with repeated
+    Writes the raw rendered image (before Kindle post-processing) to each dashboard's output_path;
+    run ``dashboard post-process`` to massage it for the device. Restrict to a subset with repeated
     ``--name``, and pass an output path to redirect a single dashboard elsewhere.
     """
     cfg = _config(ctx)
@@ -209,10 +213,10 @@ def dashboard_render(
         raise typer.BadParameter("output_file writes one dashboard; pass a single --name")
     data = pipeline.gather(cfg)  # one fetch, shared across all rendered dashboards
     for dash in selected.values():
-        png = pipeline.render_raw(cfg, data, dash)
-        path = output_file or dash.path
+        image = pipeline.render_raw(cfg, data, dash)
+        path = output_file or dash.output_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(png)
+        image.save(path, format="PNG")
 
 
 @dashboard_app.command("post-process")
@@ -225,14 +229,15 @@ def dashboard_post_process(
     """Fit, grayscale, and quantize an existing PNG into a Kindle-ready image (per dashboard)."""
     cfg = _config(ctx)
     _, dash = _one_dashboard(cfg, names)
-    png = post_process(
-        input_file.read_bytes(),
-        width=dash.width,
-        height=dash.height,
-        gray_levels=dash.gray_levels,
-        method=dash.post_process_method,
-        rotate=dash.rotate,
-    )
+    with Image.open(input_file) as image:
+        png = post_process(
+            image,
+            width=dash.width,
+            height=dash.height,
+            gray_levels=dash.gray_levels,
+            method=dash.post_process_method,
+            rotate=dash.rotate,
+        )
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_bytes(png)
 

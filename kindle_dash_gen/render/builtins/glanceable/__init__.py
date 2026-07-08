@@ -9,8 +9,10 @@ structurally identical to a private plugin: it depends only on the public
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from PIL import Image, ImageDraw
+from pydantic import BaseModel, ConfigDict
 
 from kindle_dash_gen.models import (
     DashboardData,
@@ -20,7 +22,7 @@ from kindle_dash_gen.models import (
     TrainArrival,
     WeatherReport,
 )
-from kindle_dash_gen.render.layout import register_layout
+from kindle_dash_gen.render.layout import Layout, register_layout
 from kindle_dash_gen.render.toolkit import (
     DEFAULT_FONT,
     INK,
@@ -44,18 +46,31 @@ def _load_icon(name: str, size: int) -> tuple[Image.Image, Image.Image]:
     return icon.getchannel("L"), icon.getchannel("A")
 
 
-class _Glanceable:
+class GlanceableConfig(BaseModel):
+    """Config for a glanceable dashboard's ``[dashboards.<name>.layout_config]`` table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # System font family (resolved via fontconfig). None = unspecified → the app-wide default.
+    font: str | None = None
+    # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
+    weather_temp_units: Literal["us", "si", "both"] = "us"
+
+
+class _Glanceable(Layout[GlanceableConfig]):
     """Renders the glanceable layout: hero weather, an hourly strip, and per-station arrival boards.
 
     Everything is measured against ``width``/``height`` so the layout adapts to the panel size.
     """
 
-    def __init__(self, width: int, height: int, font: str | None, units: str) -> None:
+    Config = GlanceableConfig
+
+    def __init__(self, config: GlanceableConfig, *, width: int, height: int) -> None:
         self.w = width
         self.h = height
         # No layout-specific font opinion: fall back to the app-wide default when unspecified.
-        self.fonts = Fonts(font if font is not None else DEFAULT_FONT)
-        self.units = units
+        self.fonts = Fonts(config.font if config.font is not None else DEFAULT_FONT)
+        self.units = config.weather_temp_units
         self.img = Image.new("L", (width, height), PAPER)
         self.d = ImageDraw.Draw(self.img)
 

@@ -16,12 +16,12 @@ live in `pyproject.toml` (`[tool.ruff]`).
 
 - Modules and functions: `snake_case`. Classes: `PascalCase`. Constants: `UPPER_SNAKE`.
 - **Module-private helpers are prefixed with `_`** (e.g. `_atomic_write`, `_high_low`,
-  `_quantize_lut`, `_merge_supported_parameters`). Public API is the un-prefixed surface.
+  `_quantize_lut`, `_fit`). Public API is the un-prefixed surface.
 - Domain error classes are named `<Thing>Error`. Source-fetch errors subclass the shared
   `SourceError` (in `sources/toolkit.py`) so the pipeline can isolate any source generically —
   `WeatherError`, `MtaError`. Other error types subclass `RuntimeError` directly (`LayoutError`,
-  `OpenRouterError`, `SourceError` itself).
-- Module-level constants for external vocab / literals: `NWS_API`, `API`, `_LINE_TO_URL`,
+  `SourceError` itself).
+- Module-level constants for external vocab / literals: `NWS_API`, `_LINE_TO_URL`,
   `_RAIN_KEYWORDS`, `_DIRECTION_SUFFIXES`.
 
 ## Types & Models
@@ -40,7 +40,7 @@ live in `pyproject.toml` (`[tool.ruff]`).
   intent, not mechanics. Module docstrings explain the module's role and any non-obvious
   invariant (e.g. "all data is SI; callers round for display").
 - Keyword-only params (`*,`) for multi-arg render/pipeline functions to keep call sites
-  self-documenting (`post_process(png, *, width, height, gray_levels, method)`).
+  self-documenting (`post_process(image, *, width, height, gray_levels, method, rotate)`).
 - Inject collaborators for testability with a defaulted optional param
   (`session: niquests.Session | None = None`, `feed_loader: FeedLoader | None = None`).
 

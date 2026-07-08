@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from . import plugins
 from .config import Config, Dashboard
 from .models import DashboardData
@@ -57,13 +59,13 @@ def gather(cfg: Config) -> DashboardData:
 
 
 def render(cfg: Config, data: DashboardData, dash: Dashboard) -> bytes:
-    """Draw the dashboard with its pillow layout and return a Kindle-ready PNG.
+    """Draw the dashboard with its layout and return a Kindle-ready PNG.
 
     ``render_raw`` draws ``data`` at the panel size; ``post_process`` then grayscales, fits, and
     quantizes to the device's gray levels. The image is already exact-sized, so the fit step is a
     no-op and only the quantization matters.
     """
-    raw = render_raw(cfg, data, dash)
+    image = render_raw(cfg, data, dash)
     log.info(
         "post-processing to %dx%d, %d gray levels (%s)",
         dash.width,
@@ -72,7 +74,7 @@ def render(cfg: Config, data: DashboardData, dash: Dashboard) -> bytes:
         dash.post_process_method,
     )
     return post_process(
-        raw,
+        image,
         width=dash.width,
         height=dash.height,
         gray_levels=dash.gray_levels,
@@ -81,18 +83,17 @@ def render(cfg: Config, data: DashboardData, dash: Dashboard) -> bytes:
     )
 
 
-def render_raw(cfg: Config, data: DashboardData, dash: Dashboard) -> bytes:
-    """Draw the dashboard with its pillow layout — raw PNG bytes, before Kindle post-processing."""
+def render_raw(cfg: Config, data: DashboardData, dash: Dashboard) -> Image.Image:
+    """Draw the dashboard with its layout — the raw Pillow image, before Kindle post-processing."""
     # Register bundled + any configured local layout plugins before the layout is looked up.
     plugins.load_plugins(cfg.plugins_path)
-    log.info("rendering image via layout %r (font %r)", dash.layout, dash.font)
+    log.info("rendering image via layout %r", dash.layout)
     return layout.render(
         data,
-        units=dash.weather_temp_units,
         width=dash.width,
         height=dash.height,
         layout=dash.layout,
-        font=dash.font,
+        layout_config=dash.layout_config,
     )
 
 
@@ -112,9 +113,9 @@ def run_once(cfg: Config) -> RunResult:
     """Gather once, then render and write every configured dashboard; report the outcome.
 
     Data is fetched a single time and shared across all dashboards. If every source failed (empty
-    ``source_data``), the render is skipped entirely: writing a blank dashboard would clobber
-    the last good images and waste paid generations, so the previous outputs are left in place and
-    an empty :class:`RunResult` is returned. Dashboards are isolated from one another — a render or
+    ``source_data``), the render is skipped entirely: writing a blank dashboard would clobber the
+    last good images, so the previous outputs are left in place and an empty :class:`RunResult` is
+    returned. Dashboards are isolated from one another — a render or
     write failure for one is logged (with its name) and the remaining dashboards still render; the
     failed names are returned so a one-shot caller can exit non-zero.
     """
@@ -128,10 +129,10 @@ def run_once(cfg: Config) -> RunResult:
     for name, dash in cfg.dashboards.items():
         try:
             png = render(cfg, data, dash)
-            dash.path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write(dash.path, png)
-            log.info("wrote dashboard %r to %s", name, dash.path)
-            written.append(dash.path)
+            dash.output_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(dash.output_path, png)
+            log.info("wrote dashboard %r to %s", name, dash.output_path)
+            written.append(dash.output_path)
         except Exception:  # isolate one dashboard's failure from the others
             log.exception("dashboard %r failed to render; skipping it this iteration", name)
             failed.append(name)
