@@ -26,7 +26,7 @@ for syncing to the device. Intended to run unattended on an interval (e.g. every
 ```
 kindle_dash_gen/
   __main__.py          # `python -m kindle_dash_gen` entry -> cli.run()
-  cli.py               # typer app: version, run, source group, mta group, dashboard group
+  cli.py               # typer app: version, run, source group (dynamic), dashboard group
   config.py            # TOML -> pydantic Config; Dashboard (output spec + layout_config)
   pipeline.py          # gather -> layout.render -> post_process -> atomic write
   format.py            # display formatters (temp/reading/apparent/wind/eta); SI -> display
@@ -40,10 +40,11 @@ kindle_dash_gen/
         __init__.py    #   imports source.py -> register_source("nws", NwsSource)
         source.py      #   NwsSource + NwsConfig + NwsClient
         model.py       #   NwsData (+ Temperature, HourlyForecast) — the produced data class
-      mta/             # "mta" source (three-file package):
+      mta/             # "mta" source (three-file package, owns its assets):
         __init__.py    #   imports source.py -> register_source("mta", MtaSource)
-        source.py      #   MtaSource + MtaConfig (owns Platform/Station) + MtaClient
+        source.py      #   MtaSource (+ cli() verb `list-stations`) + MtaConfig (Platform/Station) + MtaClient
         model.py       #   MtaData (+ Direction, StationBoard, TrainArrival) — the produced data class
+        assets/stations.csv  #   bundled station lookup (for `source mta list-stations`)
   render/              # turn data into a Kindle-ready PNG (pillow layout + post-process)
     layout.py          # Layout protocol (owns its Config), register/validate/build_layout, render()
     toolkit.py         # layout public plugin API (Fonts, INK/PAPER, fit_font, assets, format helpers)
@@ -51,8 +52,6 @@ kindle_dash_gen/
       glanceable/      # the default layout as a self-contained plugin (owns GlanceableConfig + assets/icons/)
     postprocess.py     # post_process(): grayscale, fit, quantize (Pillow); Image in, PNG bytes out
   plugins.py           # plugin discovery: bundled layout + source roots + optional local plugins_path
-  assets/
-    mta/stations.csv             # bundled station lookup (for `mta list-stations`)
 tests/                 # pytest, one file per module; HTTP mocked with niquests-mock
 config.example.toml    # copy to config.toml (gitignored) and edit
 docs/plugins.md        # how to write a render layout plugin (the public contract)
@@ -144,7 +143,22 @@ subcommand loads it on demand via `_config(ctx)`.
   - **Sources** register via `register_source` at import, bundled root
     `kindle_dash_gen.sources.builtins` (the `nws` and `mta` sources). A source is a `Source`
     protocol class with a `Config` and a `fetch(now)`; `build_sources` validates each
-    `[sources.<name>]` table. Build on `sources/toolkit.py` (`SourceError`). See `docs/sources.md`.
+    `[sources.<name>]` table. A source may also define an optional `cli(cls) -> typer.Typer` for
+    source-specific CLI verbs (the `mta` source ships `source mta list-stations`). Build on
+    `sources/toolkit.py` (`SourceError`). See `docs/sources.md`.
+- **The `source` CLI subcommands are wired ahead of parsing.** typer has no native dynamic
+  subcommands and its `TyperGroup`/vendored-click internals are unsupported, so `cli.py` mounts each
+  source as a `source <name>` sub-typer *before* `app()` parses: the **bundled** sources at import
+  (a module-level `_wire_source_commands()` call), and **local `plugins_path`** sources in `run()`
+  **only for a `source` invocation** (gated via `_invoked_command`, so `version`/`run`/etc. never
+  touch the plugin dir). `run()` sniffs `--config` (`_config_path_from_argv`), loads that config's
+  `plugins_path` (a broken plugin propagates — fail fast, not a hidden "no such command"), then
+  wires. `source <name>` with no verb fetches + rich-prints (a per-source `invoke_without_command`
+  callback); a source's `cli()` plain commands graft under it; `list` is a reserved source name
+  (enforced in `_wire_source_commands`). Stay on typer's public API — do **not** subclass
+  `TyperGroup` or import `typer._click`. Re-mounting a source is a harmless no-op (typer overwrites
+  by name); `_wired_sources` just avoids rebuilding. Tests drive `app` directly (bundled sources are
+  wired at import); the local-source test calls `_wire_source_commands()` explicitly.
 
   Do **not** re-add a hardcoded builtin dict for either kind.
 - **Per-source isolation.** In `gather()`, each source's `SourceError` (subclasses: `WeatherError`,

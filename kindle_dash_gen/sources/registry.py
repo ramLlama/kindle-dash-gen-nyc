@@ -16,7 +16,14 @@ from pydantic import BaseModel
 
 from .toolkit import SourceError
 
-__all__ = ["Source", "SourceError", "build_sources", "register_source", "registered_sources"]
+__all__ = [
+    "Source",
+    "SourceError",
+    "build_sources",
+    "register_source",
+    "registered_sources",
+    "source_class",
+]
 
 # The config type each source is built from. Its variance is nominal: it appears only in __init__,
 # which Protocols exclude from structural checks, so mypy computes the expected variance as
@@ -71,6 +78,19 @@ def registered_sources() -> list[str]:
 
     plugins.load_plugins()
     return sorted(_SOURCES)
+
+
+def source_class(name: str) -> type[Source[Any]] | None:
+    """The registered source class for ``name``, or ``None`` if no such source is registered.
+
+    Discovers the bundled plugins first; a caller wanting local (``plugins_path``) sources resolved
+    must have loaded those already. Lets the CLI resolve a source by name (e.g. for its ``cli()``
+    verbs) without needing its ``[sources.<name>]`` config, unlike :func:`build_sources`.
+    """
+    from .. import plugins  # lazy import: plugins imports source modules that import this module
+
+    plugins.load_plugins()
+    return _SOURCES.get(name)
 
 
 def build_sources(

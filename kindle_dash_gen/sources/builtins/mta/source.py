@@ -9,11 +9,14 @@ central config. The produced data type lives in :mod:`.model`.
 
 from __future__ import annotations
 
+import csv
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
+from importlib.resources import files
 from typing import Literal
 
+import typer
 from nyct_gtfs import NYCTFeed
 from nyct_gtfs.trip import Trip
 from pydantic import BaseModel, ConfigDict
@@ -22,6 +25,9 @@ from kindle_dash_gen.sources.registry import Source
 from kindle_dash_gen.sources.toolkit import SourceError
 
 from .model import Direction, MtaData, StationBoard, TrainArrival
+
+# This source's own package (for bundled assets like the station lookup table).
+_PACKAGE = "kindle_dash_gen.sources.builtins.mta"
 
 # GTFS directions, in the order boards present them.
 _DIRECTIONS = (Direction.NORTH, Direction.SOUTH)
@@ -182,3 +188,30 @@ class MtaSource(Source[MtaConfig]):
 
     def fetch(self, now: datetime) -> MtaData:
         return MtaData(boards=self._client.fetch(now))
+
+    @classmethod
+    def cli(cls) -> typer.Typer:
+        """Source-specific CLI verbs, mounted by the CLI under ``source mta``.
+
+        An optional hook: a source may expose its own subcommands (this one ships a station-lookup
+        helper). Sources without a ``cli`` just get the default ``source <name>`` fetch behavior.
+        The CLI grafts the returned app's commands under ``source mta``; only plain commands are
+        supported (no callback or sub-groups).
+        """
+        app = typer.Typer()
+
+        @app.command("list-stations")
+        def list_stations() -> None:
+            """Dump every MTA station (stop id, routes, name) — grep it to fill in config."""
+            data = files(_PACKAGE).joinpath("assets/stations.csv")
+            with data.open() as f:
+                rows = [
+                    (r["stop_id"], ",".join(r["routes"].split()), r["name"])
+                    for r in csv.DictReader(f)
+                ]
+            id_width = max(len(stop_id) for stop_id, _, _ in rows)
+            routes_width = max(len(routes) for _, routes, _ in rows)
+            for stop_id, routes, name in rows:
+                typer.echo(f"{stop_id:<{id_width}}  {routes:<{routes_width}}  {name}")
+
+        return app

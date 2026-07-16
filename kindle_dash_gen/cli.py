@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import csv
 import logging
+import sys
 from datetime import datetime
-from importlib.resources import files
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from PIL import Image
@@ -17,21 +16,34 @@ from . import __version__, pipeline, plugins
 from .config import Config, Dashboard, load_config
 from .render.layout import validate_layout
 from .render.postprocess import post_process
-from .sources.registry import build_sources, registered_sources
+from .sources.registry import (
+    Source,
+    SourceError,
+    build_sources,
+    registered_sources,
+    source_class,
+)
 
 app = typer.Typer(
     help="Generate a Kindle e-ink dashboard with NYC weather and subway info.",
     no_args_is_help=True,
 )
-mta_app = typer.Typer(help="Subway station lookup.", no_args_is_help=True)
-app.add_typer(mta_app, name="mta")
 source_app = typer.Typer(
-    help="Run a data source in isolation and print what it produces (debug).",
+    help="Inspect a data source in isolation: `source <name>` fetches it; `source list` to list.",
     no_args_is_help=True,
 )
 app.add_typer(source_app, name="source")
 dashboard_app = typer.Typer(help="Render the dashboard image.", no_args_is_help=True)
 app.add_typer(dashboard_app, name="dashboard")
+
+# Each source is mounted as a `source <name>` subcommand ahead of parsing, since typer has no native
+# dynamic subcommands: the bundled sources at import (see the _wire call near the bottom), local
+# plugins_path ones in run() after it sniffs --config. Re-mounting a source is a harmless no-op
+# (typer overwrites by name), so `_wired_sources` is just to avoid rebuilding the same sub-typer.
+_wired_sources: set[str] = set()
+
+# Source names the `source` group can't use: they'd shadow its own static commands (`source list`).
+_RESERVED_SOURCE_NAMES = frozenset({"list"})
 
 ConfigOption = Annotated[
     Path,
@@ -115,56 +127,83 @@ def run_dashboard(
         pipeline.run(cfg)
 
 
+def _discover_sources(ctx: typer.Context) -> Config:
+    """Load the config and discover plugins for the ``source`` debug commands.
+
+    Unlike :func:`_config`, this skips the eager whole-config validation (every source slice and
+    every dashboard's ``layout_config``): inspecting one source shouldn't fail because an unrelated
+    dashboard, or a different source, is misconfigured.
+    """
+    cfg = load_config(ctx.obj)
+    plugins.load_plugins(cfg.plugins_path)
+    return cfg
+
+
 @source_app.command("list")
 def source_list(ctx: typer.Context) -> None:
     """List the data sources available to run, marking those configured in the current config."""
-    cfg = _config(ctx)
+    cfg = _discover_sources(ctx)
     configured = set(cfg.sources)
     console = Console()
     for name in registered_sources():
         console.print(f"{name}{'  (configured)' if name in configured else ''}")
 
 
-@source_app.command("run")
-def source_run(
-    ctx: typer.Context,
-    name: Annotated[str, typer.Argument(help="Source name to run, e.g. 'nws'.")],
-) -> None:
-    """Fetch a single source and pretty-print the data object it produces (debug).
+def _build_source_typer(name: str, cls: type[Source[Any]]) -> typer.Typer:
+    """A per-source subcommand app: fetch + print by default, plus the source's own ``cli()`` verbs.
 
-    Runs the source's ``fetch`` in isolation against the current config and prints the raw produced
-    data (SI values, no display formatting) so you can inspect exactly what a source returns.
+    ``source <name>`` with no verb fetches the source (the default), so the callback runs the fetch
+    only when no subcommand was invoked. A source's optional ``cli()`` verbs mount alongside it.
     """
-    cfg = _config(ctx)
-    resolved = build_sources(cfg.sources)
-    if name not in resolved:
-        # Distinguish a typo (no such plugin) from a real source that just isn't configured, so the
-        # error points at the right fix instead of implying every name is fixable via config.
-        if name not in registered_sources():
-            raise typer.BadParameter(f"unknown source {name!r}; registered: {registered_sources()}")
+    sub = typer.Typer(
+        no_args_is_help=False,
+        help=f"Run the {name!r} source (fetch + print), or one of its subcommands.",
+    )
+
+    @sub.callback(invoke_without_command=True)
+    def _default(ctx: typer.Context) -> None:
+        if ctx.invoked_subcommand is not None:
+            return  # a source verb (e.g. list-stations) was invoked; don't also fetch
+        _print_source_fetch(ctx, name)
+
+    verbs = getattr(cls, "cli", None)
+    if verbs is not None:
+        src_cli = verbs()
+        # Only plain commands are grafted under `source <name>`; a callback or sub-groups would be
+        # dropped silently, so reject them loudly rather than surprise the source author.
+        if src_cli.registered_callback is not None or len(src_cli.registered_groups) > 0:
+            raise RuntimeError(
+                f"source {name!r} cli() may only define plain commands, "
+                "not a callback or sub-groups"
+            )
+        sub.registered_commands.extend(src_cli.registered_commands)
+    return sub
+
+
+def _print_source_fetch(ctx: typer.Context, name: str) -> None:
+    """Fetch one source in isolation and pretty-print (rich) the raw data object it produces.
+
+    Validates only the target source's config slice (not the whole config), then prints its produced
+    data at full precision (SI, no display formatting). Only reached for a registered source; a
+    registered-but-unconfigured source errors clearly.
+    """
+    cfg = _discover_sources(ctx)
+    if name not in cfg.sources:
         raise typer.BadParameter(
             f"source {name!r} is registered but has no [sources.{name}] section; "
-            f"configured: {sorted(resolved)}"
+            f"configured: {sorted(cfg.sources)}"
         )
-    source_cls, source_cfg = resolved[name]
-    result = source_cls(source_cfg).fetch(datetime.now())
+    source_cls, source_cfg = build_sources({name: cfg.sources[name]})[name]
+    try:
+        result = source_cls(source_cfg).fetch(datetime.now())
+    except SourceError as exc:
+        # A fetch failure is expected (source unavailable); report it cleanly, not as a traceback.
+        raise typer.BadParameter(f"source {name!r} failed: {exc}") from exc
     console = Console()
     if result is None:
         console.print(f"source {name!r} returned no data")
         return
     console.print(result)
-
-
-@mta_app.command("list-stations")
-def mta_list_stations() -> None:
-    """Dump every MTA station (stop id, routes, name) — grep it to fill in config."""
-    data = files("kindle_dash_gen").joinpath("assets/mta/stations.csv")
-    with data.open() as f:
-        rows = [(r["stop_id"], ",".join(r["routes"].split()), r["name"]) for r in csv.DictReader(f)]
-    id_width = max(len(stop_id) for stop_id, _, _ in rows)
-    routes_width = max(len(routes) for _, routes, _ in rows)
-    for stop_id, routes, name in rows:
-        typer.echo(f"{stop_id:<{id_width}}  {routes:<{routes_width}}  {name}")
 
 
 @dashboard_app.command("render")
@@ -217,6 +256,80 @@ def dashboard_post_process(
     output_file.write_bytes(png)
 
 
+def _config_path_from_argv(argv: list[str]) -> Path:
+    """Scan argv for the global ``--config``/``-c`` value before typer parses it.
+
+    Sources are mounted ahead of parsing (typer has no native dynamic subcommands), so we need the
+    config path early to discover a config's ``plugins_path`` sources. Best-effort: unrecognized
+    forms fall back to the default, and typer still does the real, authoritative parse afterward.
+    """
+    for i, arg in enumerate(argv):
+        if arg in ("--config", "-c") and i + 1 < len(argv):
+            return Path(argv[i + 1])
+        if arg.startswith("--config="):
+            return Path(arg.split("=", 1)[1])
+        if arg.startswith("-c="):
+            return Path(arg.split("=", 1)[1])
+        if arg.startswith("-c") and len(arg) > 2:  # click's attached short form, e.g. -cconfig.toml
+            return Path(arg[2:])
+    return Path("config.toml")
+
+
+def _invoked_command(argv: list[str]) -> str | None:
+    """The top-level subcommand in ``argv`` (the first positional), skipping the global option.
+
+    Best-effort, used only to decide whether to preload local plugin sources for a ``source``
+    invocation; typer still does the authoritative parse.
+    """
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("--config", "-c"):
+            skip_next = True  # its value is the next token
+            continue
+        if arg.startswith("-"):
+            continue
+        return arg
+    return None
+
+
+def _wire_source_commands() -> None:
+    """Mount a ``source <name>`` subcommand for every registered source not already mounted."""
+    for name in registered_sources():
+        if name in _wired_sources:
+            continue
+        if name in _RESERVED_SOURCE_NAMES:
+            raise SourceError(
+                f"source name {name!r} is reserved by the CLI; it would shadow `source {name}`"
+            )
+        cls = source_class(name)
+        assert cls is not None  # registered_sources() just returned it, so it is in the registry
+        source_app.add_typer(_build_source_typer(name, cls), name=name)
+        _wired_sources.add(name)
+
+
+# Mount the bundled sources at import so they're reachable through the app in tests and normal use;
+# local (plugins_path) sources are mounted in run() (only for a `source` invocation).
+_wire_source_commands()
+
+
 def run() -> None:
-    """Console-script entry point."""
+    """Console-script entry point.
+
+    Bundled sources are mounted at import. Local (``plugins_path``) sources are mounted here, but
+    only for a ``source`` invocation: this both avoids coupling ``version``/``run``/etc. to the
+    plugin dir and lets a broken plugin fail loud (a resolved ``--config`` whose plugins can't
+    import raises here) rather than hiding as "no such command". A bad/missing config is swallowed;
+    the source command reports it cleanly when it runs.
+    """
+    if _invoked_command(sys.argv[1:]) == "source":
+        try:
+            cfg = load_config(_config_path_from_argv(sys.argv[1:]))
+        except Exception:
+            cfg = None
+        if cfg is not None:
+            plugins.load_plugins(cfg.plugins_path)  # a broken plugin propagates (fail fast)
+            _wire_source_commands()
     app()

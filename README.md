@@ -53,10 +53,11 @@ post-process INPUT OUTPUT` massages an existing PNG into a Kindle-ready frame: g
 `post-process` acts on one dashboard (the sole one, or a single `--name`).
 
 The `source` subcommands inspect a single data source in isolation. `source list` shows every
-available source and marks the ones your config enables; `source run <name>` fetches that source and
-pretty-prints the raw data object it produces (SI values, no display formatting), so you can see
-exactly what reaches the renderer. `mta list-stations` dumps the bundled station table (stop id,
-routes, name) to help fill in `[sources.mta]`.
+available source and marks the ones your config enables; `source <name>` (e.g. `source nws`) fetches
+that source and pretty-prints the raw data object it produces (SI values, no display formatting), so
+you can see exactly what reaches the renderer. A source may also add its own subcommands: the subway
+source ships `source mta list-stations`, which dumps the bundled station table (stop id, routes,
+name) to help fill in `[sources.mta]`.
 
 ## Configuration
 

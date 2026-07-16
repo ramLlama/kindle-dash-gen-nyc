@@ -6,6 +6,7 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -344,37 +345,135 @@ def test_source_list_marks_configured_sources(tmp_path) -> None:
     assert "(configured)" in result.output  # nws is configured, so at least one is marked
 
 
-def test_source_run_prints_produced_data(tmp_path, monkeypatch) -> None:
-    # `source run nws` fetches the source in isolation and pretty-prints the produced data object.
+def test_source_name_fetches_and_prints(tmp_path, monkeypatch) -> None:
+    # `source nws` (no verb) is the default action: fetch the source and pretty-print what it makes.
     monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.source.NwsClient", _FakeNwsWithReport)
     cfg = str(_write(tmp_path, NWS_ONLY))
-    result = runner.invoke(app, ["--config", cfg, "source", "run", "nws"])
+    result = runner.invoke(app, ["--config", cfg, "source", "nws"])
     assert result.exit_code == 0, result.output
     assert "NwsData" in result.output  # the produced dataclass, pretty-printed via rich
 
 
-def test_source_run_prints_mta_data(tmp_path, monkeypatch) -> None:
+def test_source_name_fetches_mta_data(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.source.MtaClient", _FakeMtaWithBoard)
     cfg = str(_write(tmp_path, MTA_ONLY))
-    result = runner.invoke(app, ["--config", cfg, "source", "run", "mta"])
+    result = runner.invoke(app, ["--config", cfg, "source", "mta"])
     assert result.exit_code == 0, result.output
     assert "Union Sq" in result.output  # board fetched through the mta source
 
 
-def test_source_run_errors_when_registered_but_not_configured(tmp_path) -> None:
-    # mta is a registered source but absent from this config: the error names it as unconfigured.
+def test_source_mta_list_stations(tmp_path) -> None:
+    # The mta source owns a `list-stations` verb (source-defined cli()); it reads the bundled CSV
+    # and needs no live config or network.
+    cfg = str(_write(tmp_path, MTA_ONLY))
+    result = runner.invoke(app, ["--config", cfg, "source", "mta", "list-stations"])
+    assert result.exit_code == 0, result.output
+    assert "Union Sq" in result.output  # a known station in the bundled table
+
+
+def test_source_name_errors_when_registered_but_not_configured(tmp_path) -> None:
+    # mta is registered but absent from this config: the fetch default names it unconfigured.
     cfg = str(_write(tmp_path, NWS_ONLY))
-    result = runner.invoke(app, ["--config", cfg, "source", "run", "mta"])
+    result = runner.invoke(app, ["--config", cfg, "source", "mta"])
     assert result.exit_code != 0
     assert "no [sources.mta] section" in result.output
 
 
-def test_source_run_errors_on_unknown_source(tmp_path) -> None:
-    # A name that isn't a registered plugin at all reports "unknown source", not "not configured".
+def test_source_unknown_name_errors(tmp_path) -> None:
+    # A name that isn't a registered source resolves to no subcommand (clean click error).
     cfg = str(_write(tmp_path, NWS_ONLY))
-    result = runner.invoke(app, ["--config", cfg, "source", "run", "bogus"])
+    result = runner.invoke(app, ["--config", cfg, "source", "bogus"])
     assert result.exit_code != 0
-    assert "unknown source" in result.output
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["--config", "foo.toml", "source", "nws"], "foo.toml"),
+        (["--config=foo.toml"], "foo.toml"),
+        (["-c", "foo.toml", "source"], "foo.toml"),
+        (["-c=foo.toml"], "foo.toml"),
+        (["-cfoo.toml"], "foo.toml"),  # click's attached short form
+        (["source", "nws"], "config.toml"),  # default
+        ([], "config.toml"),
+    ],
+)
+def test_config_path_from_argv(argv, expected) -> None:
+    from kindle_dash_gen.cli import _config_path_from_argv
+
+    assert _config_path_from_argv(argv) == Path(expected)
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["source", "nws"], "source"),
+        (["-c", "foo.toml", "source", "nws"], "source"),  # skips the option's value
+        (["--config=foo.toml", "source"], "source"),
+        (["version"], "version"),
+        (["--config", "foo.toml"], None),  # no positional command
+        ([], None),
+    ],
+)
+def test_invoked_command(argv, expected) -> None:
+    from kindle_dash_gen.cli import _invoked_command
+
+    assert _invoked_command(argv) == expected
+
+
+_LOCAL_SOURCE = (
+    "from pydantic import BaseModel, ConfigDict\n"
+    "from kindle_dash_gen.sources.registry import Source, register_source\n"
+    "class Cfg(BaseModel):\n"
+    "    model_config = ConfigDict(extra='forbid')\n"
+    "    who: str = 'world'\n"
+    "class Greeter(Source):\n"
+    "    Config = Cfg\n"
+    "    def __init__(self, config):\n"
+    "        self._who = config.who\n"
+    "    def fetch(self, now):\n"
+    "        return {'greeting_for': self._who}\n"
+    "register_source('greeter', Greeter)\n"
+)
+
+
+def test_source_local_plugin_is_first_class(tmp_path) -> None:
+    # A source discovered from the config's plugins_path is mounted and fetchable exactly like a
+    # bundled one — the whole point of wiring sources after sniffing --config in run().
+    from kindle_dash_gen import cli as cli_mod
+    from kindle_dash_gen import plugins
+    from kindle_dash_gen.sources import registry as reg
+
+    pkg = tmp_path / "cliplugins"
+    (pkg / "greeter").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "greeter" / "__init__.py").write_text(_LOCAL_SOURCE)
+    config = (
+        f'plugins_path = "{pkg.as_posix()}"\n\n'
+        '[sources.greeter]\nwho = "nyc"\n\n'
+        '[dashboards.main]\noutput_path = "./out/dash.png"\n'
+    )
+    cfg = str(_write(tmp_path, config))
+
+    # Snapshot the registry + wiring so the temp source doesn't leak into other tests. (The pkg
+    # also lingers in sys.modules under "cliplugins"; keep local-plugin dir names unique per test.)
+    saved_sources = dict(reg._SOURCES)
+    saved_wired = set(cli_mod._wired_sources)
+    saved_groups = list(cli_mod.source_app.registered_groups)
+    try:
+        plugins.load_plugins(local_dir=pkg)  # register the local source (run() does this)
+        cli_mod._wire_source_commands()  # mount it as `source greeter`
+        fetched = runner.invoke(app, ["--config", cfg, "source", "greeter"])
+        assert fetched.exit_code == 0, fetched.output
+        assert "greeting_for" in fetched.output and "nyc" in fetched.output
+        listed = runner.invoke(app, ["--config", cfg, "source", "list"])
+        assert "greeter" in listed.output  # and it appears in `source list`
+    finally:
+        reg._SOURCES.clear()
+        reg._SOURCES.update(saved_sources)
+        cli_mod._wired_sources.clear()
+        cli_mod._wired_sources.update(saved_wired)
+        cli_mod.source_app.registered_groups[:] = saved_groups
 
 
 def test_bad_layout_config_key_fails_fast(tmp_path) -> None:
