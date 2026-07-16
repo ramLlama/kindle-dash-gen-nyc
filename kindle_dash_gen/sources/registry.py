@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from .toolkit import SourceError
 
-__all__ = ["Source", "SourceError", "build_sources", "register_source"]
+__all__ = ["Source", "SourceError", "build_sources", "register_source", "registered_sources"]
 
 # The config type each source is built from. Its variance is nominal: it appears only in __init__,
 # which Protocols exclude from structural checks, so mypy computes the expected variance as
@@ -58,6 +58,19 @@ def register_source(name: str, factory: type[Source[Any]]) -> None:
     if name in _SOURCES:
         raise SourceError(f"source {name!r} is already registered")
     _SOURCES[name] = factory
+
+
+def registered_sources() -> list[str]:
+    """Every registered source name, discovering plugins first (for CLI listing/debug).
+
+    Unlike :func:`build_sources` (which resolves only the *configured* sources), this reports every
+    source the app knows how to run. Loads the bundled plugins as a safety net; a caller wanting
+    local (``plugins_path``) sources listed must have loaded those already.
+    """
+    from .. import plugins  # lazy import: plugins imports source modules that import this module
+
+    plugins.load_plugins()
+    return sorted(_SOURCES)
 
 
 def build_sources(

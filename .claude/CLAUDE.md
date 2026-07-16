@@ -26,7 +26,7 @@ for syncing to the device. Intended to run unattended on an interval (e.g. every
 ```
 kindle_dash_gen/
   __main__.py          # `python -m kindle_dash_gen` entry -> cli.run()
-  cli.py               # typer app: version, run, weather, mta group, dashboard group
+  cli.py               # typer app: version, run, source group, mta group, dashboard group
   config.py            # TOML -> pydantic Config; Dashboard (output spec + layout_config)
   pipeline.py          # gather -> layout.render -> post_process -> atomic write
   format.py            # display formatters (temp/reading/apparent/wind/eta); SI -> display

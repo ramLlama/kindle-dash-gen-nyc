@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "typer==0.26.*",
+    "rich==15.*",  # used directly by the CLI for pretty-printing source debug output
     "niquests==3.*",
     "nyct-gtfs==2.*",
     "pillow==12.*",

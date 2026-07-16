@@ -252,7 +252,7 @@ def test_post_process_requires_single_dashboard(tmp_path) -> None:
     assert result.exit_code != 0  # ambiguous without --name across multiple dashboards
 
 
-# --- debug source commands (weather / mta get-current), rewired through build_sources in M3 ---
+# --- the generic `source` debug command (source list / source run) ---
 
 NWS_ONLY = """
 [sources.nws]
@@ -334,29 +334,47 @@ def _write(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def test_weather_command_prints_forecast(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.source.NwsClient", _FakeNwsWithReport)
-    result = runner.invoke(app, ["--config", str(_write(tmp_path, NWS_ONLY)), "weather"])
+def test_source_list_marks_configured_sources(tmp_path) -> None:
+    # `source list` shows every registered source (nws + mta are bundled) and marks the configured
+    # ones. NWS_ONLY configures only nws.
+    result = runner.invoke(app, ["--config", str(_write(tmp_path, NWS_ONLY)), "source", "list"])
     assert result.exit_code == 0, result.output
-    assert "New York, NY" in result.output  # fetched the report through the nws source
+    assert "nws" in result.output
+    assert "mta" in result.output
+    assert "(configured)" in result.output  # nws is configured, so at least one is marked
 
 
-def test_weather_command_errors_when_nws_not_configured(tmp_path) -> None:
-    # No [sources.nws] table -> the debug command reports a clean error, not a crash.
-    result = runner.invoke(app, ["--config", str(_write(tmp_path, MTA_ONLY)), "weather"])
-    assert result.exit_code != 0
+def test_source_run_prints_produced_data(tmp_path, monkeypatch) -> None:
+    # `source run nws` fetches the source in isolation and pretty-prints the produced data object.
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.source.NwsClient", _FakeNwsWithReport)
+    cfg = str(_write(tmp_path, NWS_ONLY))
+    result = runner.invoke(app, ["--config", cfg, "source", "run", "nws"])
+    assert result.exit_code == 0, result.output
+    assert "NwsData" in result.output  # the produced dataclass, pretty-printed via rich
 
 
-def test_mta_get_current_prints_arrivals(tmp_path, monkeypatch) -> None:
+def test_source_run_prints_mta_data(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.source.MtaClient", _FakeMtaWithBoard)
-    result = runner.invoke(app, ["--config", str(_write(tmp_path, MTA_ONLY)), "mta", "get-current"])
+    cfg = str(_write(tmp_path, MTA_ONLY))
+    result = runner.invoke(app, ["--config", cfg, "source", "run", "mta"])
     assert result.exit_code == 0, result.output
     assert "Union Sq" in result.output  # board fetched through the mta source
 
 
-def test_mta_get_current_errors_when_mta_not_configured(tmp_path) -> None:
-    result = runner.invoke(app, ["--config", str(_write(tmp_path, NWS_ONLY)), "mta", "get-current"])
+def test_source_run_errors_when_registered_but_not_configured(tmp_path) -> None:
+    # mta is a registered source but absent from this config: the error names it as unconfigured.
+    cfg = str(_write(tmp_path, NWS_ONLY))
+    result = runner.invoke(app, ["--config", cfg, "source", "run", "mta"])
     assert result.exit_code != 0
+    assert "no [sources.mta] section" in result.output
+
+
+def test_source_run_errors_on_unknown_source(tmp_path) -> None:
+    # A name that isn't a registered plugin at all reports "unknown source", not "not configured".
+    cfg = str(_write(tmp_path, NWS_ONLY))
+    result = runner.invoke(app, ["--config", cfg, "source", "run", "bogus"])
+    assert result.exit_code != 0
+    assert "unknown source" in result.output
 
 
 def test_bad_layout_config_key_fails_fast(tmp_path) -> None:

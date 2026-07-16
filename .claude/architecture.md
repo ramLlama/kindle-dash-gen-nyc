@@ -186,7 +186,9 @@ changes the pixels.
 
 - **Presentation stays out of the domain models** — `DashboardData` and the source models
   carry no formatting; that lives in `format.py` and the layouts.
-- **One source of truth for formatting** — the debug CLIs and the layouts call the same
-  `format.py` helpers (re-exported through `render/toolkit.py`), so formatting has one home.
+- **One source of truth for formatting** — display formatting lives only in `format.py`
+  (re-exported through `render/toolkit.py`) and is applied by the layouts. The `source run` debug
+  command deliberately prints the *raw* produced data (SI, unformatted) via rich, so it shows
+  exactly what a source hands the renderer.
 - **Fail fast on explicit config, degrade gracefully on source outages** — a bad `layout_config`
   or source key errors immediately, but a dead weather API just drops a panel.

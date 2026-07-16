@@ -52,6 +52,12 @@ post-process INPUT OUTPUT` massages an existing PNG into a Kindle-ready frame: g
 `width`×`height` via `post_process_method` (`resize`/`crop`/`pad`), and quantized to `gray_levels`.
 `post-process` acts on one dashboard (the sole one, or a single `--name`).
 
+The `source` subcommands inspect a single data source in isolation. `source list` shows every
+available source and marks the ones your config enables; `source run <name>` fetches that source and
+pretty-prints the raw data object it produces (SI values, no display formatting), so you can see
+exactly what reaches the renderer. `mta list-stations` dumps the bundled station table (stop id,
+routes, name) to help fill in `[sources.mta]`.
+
 ## Configuration
 
 See [`config.example.toml`](config.example.toml). Data sources and render layouts are both plugins;
