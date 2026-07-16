@@ -9,11 +9,12 @@ from PIL import Image
 
 from kindle_dash_gen import pipeline
 from kindle_dash_gen.config import Config
-from kindle_dash_gen.models import MtaBoards, StationBoard, WeatherReport
-from kindle_dash_gen.sources.builtins import mta as mta_mod
-from kindle_dash_gen.sources.builtins import nws as nws_mod
-from kindle_dash_gen.sources.builtins.mta import MtaError
-from kindle_dash_gen.sources.builtins.nws import WeatherError
+from kindle_dash_gen.sources.builtins.mta import source as mta_mod
+from kindle_dash_gen.sources.builtins.mta.model import MtaData, StationBoard
+from kindle_dash_gen.sources.builtins.mta.source import MtaError
+from kindle_dash_gen.sources.builtins.nws import source as nws_mod
+from kindle_dash_gen.sources.builtins.nws.model import NwsData
+from kindle_dash_gen.sources.builtins.nws.source import WeatherError
 
 CONFIG: dict = {
     "sources": {
@@ -90,19 +91,19 @@ def test_gather_isolates_weather_failure(monkeypatch) -> None:
 
     data = pipeline.gather(Config.model_validate(CONFIG))
 
-    assert WeatherReport not in data.source_data  # weather dropped, render still proceeds
-    assert data.source_data[MtaBoards].boards == []  # subway present (empty), render proceeds
+    assert NwsData not in data.source_data  # weather dropped, render still proceeds
+    assert data.source_data[MtaData].boards == []  # subway present (empty), render proceeds
 
 
 def test_gather_isolates_subway_failure(monkeypatch) -> None:
-    sentinel = SimpleNamespace(conditions="Sunny")  # stands in for a WeatherReport
+    sentinel = SimpleNamespace(conditions="Sunny")  # stands in for an NwsData
     monkeypatch.setattr(nws_mod, "NwsClient", _fake_nws(returns=sentinel))
     monkeypatch.setattr(mta_mod, "MtaClient", _FailingMtaClient)
 
     data = pipeline.gather(Config.model_validate(CONFIG))
 
     assert data.source_data[type(sentinel)] is sentinel  # weather survives a subway outage
-    assert MtaBoards not in data.source_data  # subway dropped
+    assert MtaData not in data.source_data  # subway dropped
 
 
 def test_gather_keys_source_data_by_produced_type(monkeypatch) -> None:
@@ -113,7 +114,7 @@ def test_gather_keys_source_data_by_produced_type(monkeypatch) -> None:
 
     data = pipeline.gather(Config.model_validate(CONFIG))
 
-    assert set(data.source_data) == {type(weather), MtaBoards}
+    assert set(data.source_data) == {type(weather), MtaData}
 
 
 def test_run_once_writes_kindle_ready_image(tmp_path, monkeypatch) -> None:

@@ -15,9 +15,9 @@ from PIL import Image
 from . import __version__, pipeline, plugins
 from .config import Config, Dashboard, load_config
 from .format import format_eta, format_reading, format_temp, format_wind
-from .models import Direction
 from .render.layout import validate_layout
 from .render.postprocess import post_process
+from .sources.builtins.mta.model import Direction
 from .sources.registry import build_sources
 
 app = typer.Typer(

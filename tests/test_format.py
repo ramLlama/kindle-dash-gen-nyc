@@ -1,6 +1,7 @@
 """Tests for display formatting helpers."""
 
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -11,31 +12,16 @@ from kindle_dash_gen.format import (
     format_wind,
     weather_icon,
 )
-from kindle_dash_gen.models import Temperature, WeatherReport
 
 _NOW = datetime(2026, 7, 1, 12, 0, 0)
 
 
-def _report(*, conditions: str, observed: str | None, raining: bool | None) -> WeatherReport:
-    """Minimal WeatherReport carrying only the fields weather_icon reads."""
-    return WeatherReport(
-        temperature=Temperature(20.0, None),
-        conditions=conditions,
-        humidity=None,
-        dewpoint=None,
-        wind_speed_kmh=None,
-        wind_direction="",
-        precip_probability=None,
-        raining=raining,
-        observed_conditions=observed,
-        high=None,
-        low=None,
-        high_low_date=date(2026, 7, 1),
-        forecast="",
-        forecast_name="",
-        hourly=[],
-        as_of=_NOW,
-    )
+@dataclass(frozen=True)
+class _Temp:
+    """A minimal temperature stand-in: the formatters accept any real/feels_like structure."""
+
+    real: float
+    feels_like: float | None
 
 
 @pytest.mark.parametrize(
@@ -69,9 +55,9 @@ def test_format_wind(kmh, direction, units, expected) -> None:
 @pytest.mark.parametrize(
     "temp,units,expected",
     [
-        (Temperature(31, 40.6), "us", "88°F ⟨105°F⟩"),
-        (Temperature(31, 31.2), "si", "31°C"),  # feels-like rounds to same -> omitted
-        (Temperature(20, None), "us", "68°F"),  # no apparent temp
+        (_Temp(31, 40.6), "us", "88°F ⟨105°F⟩"),
+        (_Temp(31, 31.2), "si", "31°C"),  # feels-like rounds to same -> omitted
+        (_Temp(20, None), "us", "68°F"),  # no apparent temp
         (None, "us", "—"),
     ],
 )
@@ -99,5 +85,4 @@ def test_format_eta(delta_minutes: float, expected: str) -> None:
     ],
 )
 def test_weather_icon(conditions, observed, raining, expected) -> None:
-    report = _report(conditions=conditions, observed=observed, raining=raining)
-    assert weather_icon(report) == expected
+    assert weather_icon(observed, conditions, raining) == expected

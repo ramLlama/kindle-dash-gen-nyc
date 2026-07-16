@@ -14,14 +14,7 @@ from typing import Literal
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict
 
-from kindle_dash_gen.models import (
-    DashboardData,
-    Direction,
-    MtaBoards,
-    StationBoard,
-    TrainArrival,
-    WeatherReport,
-)
+from kindle_dash_gen.models import DashboardData
 from kindle_dash_gen.render.layout import Layout, register_layout
 from kindle_dash_gen.render.toolkit import (
     DEFAULT_FONT,
@@ -34,6 +27,13 @@ from kindle_dash_gen.render.toolkit import (
     load_asset_image,
     weather_icon,
 )
+from kindle_dash_gen.sources.builtins.mta.model import (
+    Direction,
+    MtaData,
+    StationBoard,
+    TrainArrival,
+)
+from kindle_dash_gen.sources.builtins.nws.model import NwsData
 
 _PACKAGE = "kindle_dash_gen.render.builtins.glanceable"  # this plugin's own package, for assets
 _MARGIN = 44
@@ -76,11 +76,11 @@ class _Glanceable(Layout[GlanceableConfig]):
 
     def render(self, data: DashboardData) -> Image.Image:
         y = self._title(_MARGIN, data.generated_at)
-        weather = data.source_data.get(WeatherReport)
+        weather = data.source_data.get(NwsData)
         if weather is not None:
             y = self._hero(y, weather)
             y = self._hourly(y, weather)
-        mta = data.source_data.get(MtaBoards)
+        mta = data.source_data.get(MtaData)
         self._subway(y, mta.boards if mta is not None else [])
         return self.img
 
@@ -112,7 +112,7 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.d.line((_MARGIN, rule, self.w - _MARGIN, rule), fill=INK, width=5)
         return rule + 28
 
-    def _hero(self, y: int, weather: WeatherReport) -> int:
+    def _hero(self, y: int, weather: NwsData) -> int:
         icon_slot = 260  # horizontal space reserved for the icon at the right
         temp = format_apparent(weather.temperature, self.units)
         temp_font = fit_font(self.fonts, temp, "Black", 190, self.w - 2 * _MARGIN - icon_slot - 30)
@@ -131,12 +131,13 @@ class _Glanceable(Layout[GlanceableConfig]):
         band_h = bottom - y
         icon_box = int(min(icon_slot, band_h))
         icon_cx = self.w - _MARGIN - icon_slot / 2
-        self._paste_icon(weather_icon(weather), icon_cx, y + band_h / 2, icon_box)
+        icon = weather_icon(weather.observed_conditions, weather.conditions, weather.raining)
+        self._paste_icon(icon, icon_cx, y + band_h / 2, icon_box)
 
         # no rule here: separate the hourly strip from the hero with a little whitespace
         return bottom + 28
 
-    def _hourly(self, y: int, weather: WeatherReport) -> int:
+    def _hourly(self, y: int, weather: NwsData) -> int:
         hours = weather.hourly[:4]
         if len(hours) == 0:
             return y

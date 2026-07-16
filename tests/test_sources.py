@@ -72,8 +72,8 @@ def test_build_sources_empty_is_empty(source_registry) -> None:
 
 def test_build_sources_resolves_bundled_nws_and_mta() -> None:
     # The real bundled sources validate their own [sources.<name>] slices into their Config models.
-    from kindle_dash_gen.sources.builtins.mta import MtaConfig
-    from kindle_dash_gen.sources.builtins.nws import NwsConfig
+    from kindle_dash_gen.sources.builtins.mta.source import MtaConfig
+    from kindle_dash_gen.sources.builtins.nws.source import NwsConfig
 
     resolved = build_sources(
         {

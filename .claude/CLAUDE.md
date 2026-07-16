@@ -31,15 +31,19 @@ kindle_dash_gen/
   pipeline.py          # gather -> layout.render -> post_process -> atomic write
   format.py            # display formatters (temp/reading/apparent/wind/eta); SI -> display
   models/              # frozen dataclasses (domain models, no presentation)
-    weather.py         # Temperature, HourlyForecast, WeatherReport
-    mta.py             # Direction (StrEnum), TrainArrival, StationBoard, MtaBoards
-    dashboard_data.py  # DashboardData (source_data keyed by produced type)
+    dashboard_data.py  # DashboardData (source_data keyed by produced type) — the only model here
   sources/             # data-source plugins (source-side mirror of render/)
     toolkit.py         # public plugin API: SourceError (base all source errors subclass)
     registry.py        # Source protocol, register_source, build_sources() dispatch
     builtins/          # bundled source plugins (discovered, not special-cased)
-      nws/             # "nws" source: NwsClient + NwsConfig -> WeatherReport
-      mta/             # "mta" source: MtaClient + MtaConfig (owns Platform/Station) -> MtaBoards
+      nws/             # "nws" source (three-file package):
+        __init__.py    #   imports source.py -> register_source("nws", NwsSource)
+        source.py      #   NwsSource + NwsConfig + NwsClient
+        model.py       #   NwsData (+ Temperature, HourlyForecast) — the produced data class
+      mta/             # "mta" source (three-file package):
+        __init__.py    #   imports source.py -> register_source("mta", MtaSource)
+        source.py      #   MtaSource + MtaConfig (owns Platform/Station) + MtaClient
+        model.py       #   MtaData (+ Direction, StationBoard, TrainArrival) — the produced data class
   render/              # turn data into a Kindle-ready PNG (pillow layout + post-process)
     layout.py          # Layout protocol (owns its Config), register/validate/build_layout, render()
     toolkit.py         # layout public plugin API (Fonts, INK/PAPER, fit_font, assets, format helpers)
@@ -57,20 +61,26 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
 
 ## Key Concepts & Domain Model
 
-- **DashboardData** (`models/dashboard_data.py`) is the aggregate handed to the renderer:
-  `generated_at` (also used as "now" for ETAs) plus `source_data: dict[type, Any]`, keyed by each
-  source's produced data class (e.g. `WeatherReport`, `MtaBoards`). Consumers look up defensively:
-  `data.source_data.get(WeatherReport)`; a failed or empty source is simply absent from the dict.
-- **MtaBoards** (`models/mta.py`) wraps `list[StationBoard]` so the subway source contributes a
-  single typed value (a bare list can't be a `source_data` key).
+- **Provider-shaped data, owned by each source.** There is no shared cross-provider model
+  hierarchy: each source defines and owns the data class it produces (in its own `model.py`), and a
+  layout reconciles multiple providers in its own local adapter. This is the guiding decision behind
+  the multi-provider work (Open-Meteo weather, NWS alerts, AQI).
+- **DashboardData** (`models/dashboard_data.py`, the only model left under `models/`) is the
+  aggregate handed to the renderer: `generated_at` (also used as "now" for ETAs) plus
+  `source_data: dict[type, Any]`, keyed by each source's produced data class (e.g. `NwsData`,
+  `MtaData`). Consumers look up defensively: `data.source_data.get(NwsData)`; a failed or empty
+  source is simply absent from the dict.
+- **MtaData** (`sources/builtins/mta/model.py`) wraps `list[StationBoard]` (as `.boards`) so the
+  subway source contributes a single typed value (a bare list can't be a `source_data` key).
 - **Station vs Platform** (`sources/builtins/mta/`): the mta source owns these config models. A
   **Station** is a display board keyed by name; it merges one or more **Platform** entries (each a
   GTFS base stop id + the lines serving it) into per-direction arrival lists. Example: "Union Sq"
   merges the N/Q/R/W, 4/5/6, and L platforms into one board. Boards are **uncapped** — the layout
   decides how many arrivals to show at render.
 - **Direction** is a `StrEnum` with values `"N"`/`"S"` (GTFS uptown/downtown, nominal for the L).
-- **WeatherReport** carries current conditions, today/tomorrow high-low, and upcoming hours.
-  `Temperature` bundles a `real` value with an optional `feels_like` (apparent).
+- **NwsData** (`sources/builtins/nws/model.py`) carries current conditions, today/tomorrow
+  high-low, and upcoming hours. `Temperature` bundles a `real` value with an optional `feels_like`
+  (apparent).
 
 ## Architecture Overview
 

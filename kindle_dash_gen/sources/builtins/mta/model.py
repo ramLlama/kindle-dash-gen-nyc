@@ -1,4 +1,4 @@
-"""Subway (MTA) domain models."""
+"""Data the ``mta`` source produces (owned by the source that produces it)."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class StationBoard:
 
 
 @dataclass(frozen=True, kw_only=True)
-class MtaBoards:
+class MtaData:
     """All station boards from one MTA fetch, wrapped as a single value.
 
     The subway source contributes this to ``DashboardData.source_data`` under its own type key

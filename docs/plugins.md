@@ -101,12 +101,20 @@ dict[type, Any]`, which maps each source's produced data class to its instance. 
 need defensively — a source that failed or had no data is simply absent:
 
 ```python
-from kindle_dash_gen.models import MtaBoards, WeatherReport
+from kindle_dash_gen.sources.builtins.mta.model import MtaData
+from kindle_dash_gen.sources.builtins.nws.model import NwsData
 
-weather = data.source_data.get(WeatherReport)          # WeatherReport | None
-mta = data.source_data.get(MtaBoards)
+weather = data.source_data.get(NwsData)                # NwsData | None
+mta = data.source_data.get(MtaData)
 boards = mta.boards if mta is not None else []          # list[StationBoard]
 ```
+
+Each source owns the data type it produces, so a layout imports those types from the source
+package. A layout that renders weather from more than one provider looks each up by its own type
+(`data.source_data.get(NwsData)`, `data.source_data.get(OpenMeteoData)`) and reconciles them in its
+own adapter — there is no shared weather model. Note that importing a provider's `.model` also
+imports and registers that provider (its package `__init__` pulls in the source client and its
+dependencies), so a layout that references a source type transitively loads that source's stack.
 
 ## The toolkit (`kindle_dash_gen.render.toolkit`)
 
@@ -126,8 +134,10 @@ The public surface for building layouts — everything the bundled `glanceable` 
 - Display formatters — `format_reading`, `format_apparent`, `format_temp`, `format_wind`,
   `format_eta`, and `weather_icon`. **Render through these**; all data reaches a layout in SI, and
   these apply unit conversion + rounding at display time (the "SI internally, round at display"
-  invariant). `weather_icon(report)` returns the icon name (`"sunny"`/`"cloudy"`/`"rain"`/`"snow"`)
-  a layout can pair with its own `assets/icons/`.
+  invariant). `format_reading`/`format_apparent` take anything exposing `.real`/`.feels_like`, so
+  each provider's own temperature type works. `weather_icon(observed, conditions, raining)` takes
+  plain strings (pass `observed=None` if your source has no station observation) and returns the
+  icon name (`"sunny"`/`"cloudy"`/`"rain"`/`"snow"`) a layout can pair with its own `assets/icons/`.
 - `LayoutError` — raise for unrecoverable layout problems; the pipeline treats it as a render
   failure for that dashboard (isolated from the others).
 

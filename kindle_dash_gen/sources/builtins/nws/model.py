@@ -1,7 +1,9 @@
-"""Weather domain models.
+"""Data the ``nws`` source produces.
 
 All values are SI (°C, km/h) at full precision; rounding to whole degrees happens only at
-display time in :mod:`kindle_dash_gen.format`.
+display time in :mod:`kindle_dash_gen.format`. These types are owned by the source that produces
+them (there is no shared cross-provider weather model): a layout that renders weather reconciles
+each provider's own type in its own adapter.
 """
 
 from __future__ import annotations
@@ -29,8 +31,8 @@ class HourlyForecast:
 
 
 @dataclass(frozen=True, kw_only=True)
-class WeatherReport:
-    """Current conditions plus near-term forecast for one location (all SI units)."""
+class NwsData:
+    """Current conditions plus near-term forecast for one location, from NWS (all SI units)."""
 
     temperature: Temperature  # current conditions
     conditions: str  # current short forecast, e.g. "Partly Cloudy"

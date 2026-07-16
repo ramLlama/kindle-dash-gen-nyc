@@ -103,12 +103,14 @@ the produced object's class. Consumers (layouts, prompt templates) look their da
 degrade gracefully when it's absent:
 
 ```python
-from kindle_dash_gen.models import WeatherReport
-weather = data.source_data.get(WeatherReport)  # None if the weather source failed or was absent
+from kindle_dash_gen.sources.builtins.nws.model import NwsData
+weather = data.source_data.get(NwsData)  # None if the weather source failed or was absent
 ```
 
-Two sources that produce the **same** data class collide (one would silently overwrite the other),
-so `gather()` fails fast with a `SourceError` if that happens. Give each source its own data class.
+A source owns the data class it produces (it lives with the source, e.g. `NwsData` in
+`sources/builtins/nws/model.py`), so there is no shared cross-source model. Two sources that produce
+the **same** data class collide (one would silently overwrite the other), so `gather()` fails fast
+with a `SourceError` if that happens. Give each source its own data class.
 
 ## Error isolation (`SourceError`)
 
@@ -126,6 +128,9 @@ failure; return `None` for the benign "nothing to report this run" case.
   (`package = false`), so there is no install step.
 - The bundled `nws` (`sources/builtins/nws/`) and `mta` (`sources/builtins/mta/`) are the worked
   references: each owns its config models and registers itself, structurally identical to a private
-  source.
+  source. They split logic across three files — `model.py` (the produced data class), `source.py`
+  (the client + `Config`), and `__init__.py` (which imports `source.py` and calls `register_source`).
+  A single `__init__.py` works too; discovery only imports the subpackage, so registration must be
+  reachable from `__init__.py`.
 - Keep data in SI units through your data classes and round/convert only at display time (the "SI
   internally, round at display" invariant); the display formatters live in the render toolkit.

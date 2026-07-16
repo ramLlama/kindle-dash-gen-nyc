@@ -6,8 +6,23 @@ Internal data is SI; these convert to the configured display units at output tim
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Protocol
 
-from .models import Temperature, WeatherReport
+
+class _TemperatureLike(Protocol):
+    """A temperature reading these helpers can format: a real value and an optional feels-like.
+
+    Structural so any source's own temperature type satisfies it (there is no shared weather model);
+    this keeps formatting provider-agnostic. Members are read-only properties so a ``frozen``
+    dataclass (read-only attributes) matches — a plain annotation would demand a settable attribute.
+    """
+
+    @property
+    def real(self) -> float: ...
+
+    @property
+    def feels_like(self) -> float | None: ...
+
 
 _KMH_TO_MPH = 0.621371
 
@@ -41,7 +56,7 @@ def format_temp(celsius: float | None, units: str) -> str:
     return f"{_c_to_f(celsius)}°F"  # "us"
 
 
-def format_reading(temp: Temperature | None, units: str) -> str:
+def format_reading(temp: _TemperatureLike | None, units: str) -> str:
     """Format a temperature reading, appending the feels-like in angle brackets when it differs."""
     if temp is None:
         return "—"
@@ -52,7 +67,7 @@ def format_reading(temp: Temperature | None, units: str) -> str:
     return base
 
 
-def format_apparent(temp: Temperature | None, units: str) -> str:
+def format_apparent(temp: _TemperatureLike | None, units: str) -> str:
     """Format only the apparent ("feels like") temperature, falling back to the real value."""
     if temp is None:
         return "—"
@@ -60,19 +75,21 @@ def format_apparent(temp: Temperature | None, units: str) -> str:
     return format_temp(value, units)
 
 
-def weather_icon(report: WeatherReport) -> str:
+def weather_icon(observed: str | None, conditions: str | None, raining: bool | None) -> str:
     """Classify current conditions into one of four dashboard icons.
 
     Returns ``"snow"``, ``"rain"``, ``"cloudy"``, or ``"sunny"`` (the default). The ``raining``
-    observation forces ``"rain"`` unless the condition text says snow; otherwise the icon is
-    chosen from the observed (falling back to forecast) condition text by keyword.
+    observation forces ``"rain"`` unless the condition text says snow; otherwise the icon is chosen
+    from the observed (falling back to forecast) condition text by keyword. Takes plain strings so
+    it stays provider-agnostic; a layout passes whatever its own weather type exposes (a source
+    without station observations passes ``observed=None``).
     """
-    text = (report.observed_conditions or report.conditions or "").lower()
+    text = (observed or conditions or "").lower()
     for icon, keywords in _ICON_KEYWORDS:
         if any(word in text for word in keywords):
             return icon
     # No keyword matched: trust a bare "raining" observation before defaulting to sunny.
-    if report.raining is True:
+    if raining is True:
         return "rain"
     return "sunny"
 

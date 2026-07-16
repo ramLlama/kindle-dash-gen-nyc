@@ -45,17 +45,23 @@ fits, and quantizes it into Kindle-ready PNG bytes.
 ## Sources
 
 Sources are **discovered plugins** (the source-side mirror of the render layouts). Each lives under
-`sources/builtins/<name>/` (or a local `plugins_path` dir), registers a `Source` protocol class via
+`sources/builtins/<name>/` as a three-file package — `__init__.py` (imports `source.py` so the
+`register_source` call fires; discovery imports the subpackage, not its inner modules), `source.py`
+(the `Source` class + its `Config` + client), and `model.py` (the data class the source produces,
+which it owns) — or a local `plugins_path` dir. Each registers a `Source` protocol class via
 `register_source(name, factory)` at import, and declares a pydantic `Config` class attribute for its
-`[sources.<name>]` table. `sources/registry.py` holds the empty registry, the `Source` protocol, and
+`[sources.<name>]` table. There is no shared cross-provider data model: each source owns its own
+produced type, and a layout reconciles multiple providers in its own adapter.
+`sources/registry.py` holds the empty registry, the `Source` protocol, and
 `build_sources()`; `sources/toolkit.py` exposes `SourceError`, the base every source error
 subclasses. `gather()` (above) drives them. See `docs/sources.md` for the contract. Below is what
 each bundled source does internally.
 
 ### NWS weather (sources/builtins/nws/)
 
-The `nws` source (`_NwsSource` + `NwsConfig`) wraps `NwsClient`; `WeatherError` subclasses
-`SourceError`. The NWS API is multi-step. `NwsClient.fetch(lat, lon)`:
+The `nws` source (`NwsSource` + `NwsConfig`, in `source.py`) wraps `NwsClient` and produces
+`NwsData` (in `model.py`); `WeatherError` subclasses `SourceError`. The NWS API is multi-step.
+`NwsClient.fetch(lat, lon)`:
 
 1. `GET /points/{lat},{lon}` (coords rounded to 4 dp — NWS rejects more) → returns per-location
    URLs: `forecast`, `forecastHourly`, `forecastGridData`, `observationStations`, plus a
@@ -77,9 +83,10 @@ All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
 ### MTA subway (sources/builtins/mta/)
 
-The `mta` source (`_MtaSource` + `MtaConfig`) owns its config models — `Platform` and `Station` live
-here, not in central config — and wraps its boards in an `MtaBoards` value; `MtaError` subclasses
-`SourceError`. `MtaClient(stations).fetch()` builds one `StationBoard` per configured station name.
+The `mta` source (`MtaSource` + `MtaConfig`, in `source.py`) owns its config models — `Platform` and
+`Station` live here, not in central config — and wraps its boards in an `MtaData` value (`.boards`,
+in `model.py`); `MtaError` subclasses `SourceError`. `MtaClient(stations).fetch()` builds one
+`StationBoard` per configured station name.
 
 - Each MTA GTFS-realtime feed covers a group of lines (e.g. one feed for N/Q/R/W). Feed URLs
   come from `nyct_gtfs.NYCTFeed._train_to_url` (`_LINE_TO_URL`). The client collects the

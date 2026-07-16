@@ -1,16 +1,10 @@
-"""Domain data models produced by the sources and consumed by the renderer."""
+"""Cross-source aggregate model consumed by the renderer.
+
+Per-source data types (weather, subway, …) are owned by the source that produces them, under
+``kindle_dash_gen.sources.builtins.<name>.model``. This package holds only the aggregate that
+carries them into a render.
+"""
 
 from .dashboard_data import DashboardData
-from .mta import Direction, MtaBoards, StationBoard, TrainArrival
-from .weather import HourlyForecast, Temperature, WeatherReport
 
-__all__ = [
-    "DashboardData",
-    "Direction",
-    "HourlyForecast",
-    "MtaBoards",
-    "StationBoard",
-    "Temperature",
-    "TrainArrival",
-    "WeatherReport",
-]
+__all__ = ["DashboardData"]

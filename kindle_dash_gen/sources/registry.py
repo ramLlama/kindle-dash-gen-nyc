@@ -20,7 +20,7 @@ __all__ = ["Source", "SourceError", "build_sources", "register_source"]
 
 # The config type each source is built from. Its variance is nominal: it appears only in __init__,
 # which Protocols exclude from structural checks, so mypy computes the expected variance as
-# covariant. A concrete source (e.g. _NwsSource) annotates its own __init__ with its real config.
+# covariant. A concrete source (e.g. NwsSource) annotates its own __init__ with its real config.
 ConfigT_co = TypeVar("ConfigT_co", bound=BaseModel, covariant=True)
 
 

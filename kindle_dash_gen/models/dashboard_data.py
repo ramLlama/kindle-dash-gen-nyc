@@ -11,10 +11,9 @@ from typing import Any
 class DashboardData:
     """Everything gathered for one dashboard render (presentation config stays out of it).
 
-    ``source_data`` maps each source's produced data class to its instance (e.g. ``WeatherReport``
-    -> a ``WeatherReport``, ``MtaBoards`` -> an ``MtaBoards``). A source that failed or had no data
-    is simply absent, so a consumer looks its data up defensively:
-    ``data.source_data.get(WeatherReport)``.
+    ``source_data`` maps each source's produced data class to its instance (e.g. ``NwsData``
+    -> an ``NwsData``, ``MtaData`` -> an ``MtaData``). A source that failed or had no data is simply
+    absent, so a consumer looks its data up defensively: ``data.source_data.get(NwsData)``.
     """
 
     generated_at: datetime  # also used as "now" for ETA formatting

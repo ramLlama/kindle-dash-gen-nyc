@@ -16,7 +16,7 @@ from PIL import Image, ImageFont
 
 # Display formatters re-exported as part of the public plugin surface. Layouts must render through
 # these (never convert units themselves) to honor the "SI internally, round at display" invariant;
-# `weather_icon` maps a report to a bundled-icon name.
+# `weather_icon(observed, conditions, raining)` maps condition text to a bundled-icon name.
 from ..format import (
     format_apparent,
     format_eta,

@@ -13,18 +13,16 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from kindle_dash_gen.models import (
-    DashboardData,
-    Direction,
-    HourlyForecast,
-    MtaBoards,
-    StationBoard,
-    Temperature,
-    TrainArrival,
-    WeatherReport,
-)
+from kindle_dash_gen.models import DashboardData
 from kindle_dash_gen.render.layout import LayoutError, render
 from kindle_dash_gen.render.toolkit import _resolve_face
+from kindle_dash_gen.sources.builtins.mta.model import (
+    Direction,
+    MtaData,
+    StationBoard,
+    TrainArrival,
+)
+from kindle_dash_gen.sources.builtins.nws.model import HourlyForecast, NwsData, Temperature
 
 NOW = datetime(2026, 7, 2, 20, 30, 0)
 W, H = 1072, 1448
@@ -32,8 +30,8 @@ W, H = 1072, 1448
 _MISSING = object()  # distinguishes "use default" from an explicit None/[]
 
 
-def _weather() -> WeatherReport:
-    return WeatherReport(
+def _weather() -> NwsData:
+    return NwsData(
         temperature=Temperature(41.0, 44.0),
         conditions="Clear",
         humidity=40,
@@ -91,9 +89,9 @@ def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     b = _boards() if boards is _MISSING else boards
     source_data: dict[type, object] = {}
     if w is not None:
-        source_data[WeatherReport] = w
+        source_data[NwsData] = w
     if b is not None:
-        source_data[MtaBoards] = MtaBoards(boards=b)
+        source_data[MtaData] = MtaData(boards=b)
     return DashboardData(generated_at=NOW, source_data=source_data)
 
 

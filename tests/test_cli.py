@@ -11,7 +11,8 @@ from typer.testing import CliRunner
 
 from kindle_dash_gen import pipeline
 from kindle_dash_gen.cli import app
-from kindle_dash_gen.models import Direction, StationBoard, Temperature, TrainArrival, WeatherReport
+from kindle_dash_gen.sources.builtins.mta.model import Direction, StationBoard, TrainArrival
+from kindle_dash_gen.sources.builtins.nws.model import NwsData, Temperature
 
 runner = CliRunner()
 
@@ -71,8 +72,8 @@ class _FakeMtaClient:
 def _patch_clients(monkeypatch) -> None:
     # gather() constructs the source clients inside the bundled source modules; patch them there so
     # the pillow layout renders offline against fakes.
-    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.NwsClient", _FakeNwsClient)
-    monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.MtaClient", _FakeMtaClient)
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.source.NwsClient", _FakeNwsClient)
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.source.MtaClient", _FakeMtaClient)
 
 
 def _assert_png(path: Path, size: tuple[int, int]) -> None:
@@ -275,8 +276,8 @@ output_path = "./out/dash.png"
 """
 
 
-def _weather_report() -> WeatherReport:
-    return WeatherReport(
+def _weather_report() -> NwsData:
+    return NwsData(
         temperature=Temperature(30.0, 32.0),
         conditions="Sunny",
         humidity=50,
@@ -334,7 +335,7 @@ def _write(tmp_path: Path, text: str) -> Path:
 
 
 def test_weather_command_prints_forecast(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.NwsClient", _FakeNwsWithReport)
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.nws.source.NwsClient", _FakeNwsWithReport)
     result = runner.invoke(app, ["--config", str(_write(tmp_path, NWS_ONLY)), "weather"])
     assert result.exit_code == 0, result.output
     assert "New York, NY" in result.output  # fetched the report through the nws source
@@ -347,7 +348,7 @@ def test_weather_command_errors_when_nws_not_configured(tmp_path) -> None:
 
 
 def test_mta_get_current_prints_arrivals(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.MtaClient", _FakeMtaWithBoard)
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.source.MtaClient", _FakeMtaWithBoard)
     result = runner.invoke(app, ["--config", str(_write(tmp_path, MTA_ONLY)), "mta", "get-current"])
     assert result.exit_code == 0, result.output
     assert "Union Sq" in result.output  # board fetched through the mta source
