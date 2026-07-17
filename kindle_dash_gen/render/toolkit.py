@@ -19,6 +19,7 @@ from PIL import Image, ImageFont
 # `weather_icon(observed, conditions, raining)` maps condition text to a bundled-icon name.
 from ..format import (
     format_apparent,
+    format_aqi,
     format_eta,
     format_reading,
     format_temp,
@@ -35,6 +36,7 @@ __all__ = [
     "fit_font",
     "load_asset_image",
     "format_apparent",
+    "format_aqi",
     "format_eta",
     "format_reading",
     "format_temp",

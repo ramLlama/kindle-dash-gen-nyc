@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from kindle_dash_gen.format import (
+    format_aqi,
     format_eta,
     format_reading,
     format_temp,
@@ -50,6 +51,23 @@ def test_format_temp(celsius, units, expected) -> None:
 )
 def test_format_wind(kmh, direction, units, expected) -> None:
     assert format_wind(kmh, direction, units) == expected
+
+
+@pytest.mark.parametrize(
+    "aqi,expected",
+    [
+        (0, "AQI 0 · Good"),
+        (50, "AQI 50 · Good"),  # inclusive upper bound
+        (51, "AQI 51 · Moderate"),
+        (110, "AQI 110 · Unhealthy (Sensitive)"),
+        (175, "AQI 175 · Unhealthy"),
+        (250, "AQI 250 · Very Unhealthy"),
+        (400, "AQI 400 · Hazardous"),  # 301+
+        (None, "—"),
+    ],
+)
+def test_format_aqi(aqi, expected) -> None:
+    assert format_aqi(aqi) == expected
 
 
 @pytest.mark.parametrize(

@@ -113,9 +113,12 @@ is deliberate. The CLI bridges with `asyncio.run(...)` at each command boundary;
 plain sync `def`. The fit step is effectively a no-op since the layout already draws at exact size,
 so only quantization matters. The `dashboard` CLI subcommands expose each step in isolation for
 debugging. The "a layout reconciles multiple providers in its own adapter" principle is now realized
-concretely: the bundled `glanceable` layout has a private `_weather` adapter that normalizes
-whichever weather provider is present (preferring Open-Meteo, falling back to NWS) into a
-layout-local draw surface.
+concretely: the bundled `glanceable` layout has a private `_weather` adapter that **combines**
+whichever weather providers are present into one layout-local draw surface — hero/hourly from the
+preferred provider (Open-Meteo, NWS fallback), **AQI off Open-Meteo and alerts off NWS
+independently** (each absent when its provider isn't configured), so `render()` never inspects a
+provider type. The hero draws the AQI badge (`format_aqi`) and the most-severe active alert (warning
+triangle + `+N more`).
 
 See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, the Open-Meteo
 concurrent forecast+AQI fetch, MTA feed deduplication, and the layout/post-process details.

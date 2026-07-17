@@ -7,6 +7,7 @@ it depends on the system font and is an iterating visual concern.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -22,7 +23,12 @@ from kindle_dash_gen.sources.builtins.mta.model import (
     StationBoard,
     TrainArrival,
 )
-from kindle_dash_gen.sources.builtins.nws.model import HourlyForecast, NwsData, Temperature
+from kindle_dash_gen.sources.builtins.nws.model import (
+    HourlyForecast,
+    NwsData,
+    Temperature,
+    WeatherAlert,
+)
 from kindle_dash_gen.sources.builtins.open_meteo import model as om
 
 NOW = datetime(2026, 7, 2, 20, 30, 0)
@@ -213,6 +219,79 @@ def test_wmo_icon_classification(code: int, icon: str) -> None:
     from kindle_dash_gen.render.builtins.glanceable import _wmo_icon
 
     assert _wmo_icon(code) == icon
+
+
+def _alert(event: str, severity: str) -> WeatherAlert:
+    return WeatherAlert(
+        event=event,
+        category="Met",
+        severity=severity,
+        certainty="Likely",
+        urgency="Immediate",
+        status="Actual",
+        message_type="Alert",
+        area_desc="NYC",
+        sender_name="NWS",
+        headline=None,
+        description=None,
+        instruction=None,
+        response=None,
+        effective=None,
+        onset=None,
+        expires=None,
+        ends=None,
+    )
+
+
+def test_adapter_combines_aqi_and_alerts_across_providers() -> None:
+    # AQI comes from Open-Meteo, alerts from NWS — both surface even though Open-Meteo drives the
+    # hero. Alerts are ordered most-severe-first regardless of source order.
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    om_weather = replace(_open_meteo_weather(), us_aqi=110)
+    nws = replace(
+        _weather(), alerts=[_alert("Heat Advisory", "Moderate"), _alert("Tornado", "Extreme")]
+    )
+    data = DashboardData(generated_at=NOW, source_data={NwsData: nws, om.OpenMeteoData: om_weather})
+    resolved = adapt(data)
+    assert resolved is not None
+    assert resolved.aqi == 110  # from Open-Meteo
+    assert resolved.alerts == ("Tornado", "Heat Advisory")  # Extreme before Moderate
+
+
+def test_adapter_omits_missing_provider_fields() -> None:
+    # NWS-only: no AQI (Open-Meteo absent). Open-Meteo-only: no alerts (NWS absent).
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    nws_only = DashboardData(generated_at=NOW, source_data={NwsData: _weather()})
+    resolved = adapt(nws_only)
+    assert resolved is not None
+    assert resolved.aqi is None
+    assert resolved.alerts == ()
+
+    om_only = DashboardData(
+        generated_at=NOW, source_data={om.OpenMeteoData: replace(_open_meteo_weather(), us_aqi=42)}
+    )
+    resolved = adapt(om_only)
+    assert resolved is not None
+    assert resolved.aqi == 42
+    assert resolved.alerts == ()
+
+
+def test_renders_with_aqi_and_alerts() -> None:
+    # The extra hero rows must not break the full-size render.
+    om_weather = replace(_open_meteo_weather(), us_aqi=165)
+    nws = replace(_weather(), alerts=[_alert("Flash Flood Warning", "Severe")])
+    data = DashboardData(
+        generated_at=NOW,
+        source_data={
+            NwsData: nws,
+            om.OpenMeteoData: om_weather,
+            MtaData: MtaData(boards=_boards()),
+        },
+    )
+    img = _render(data)
+    assert img.size == (W, H)
 
 
 def test_renders_without_weather() -> None:

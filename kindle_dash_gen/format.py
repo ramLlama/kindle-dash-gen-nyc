@@ -94,6 +94,33 @@ def weather_icon(observed: str | None, conditions: str | None, raining: bool | N
     return "sunny"
 
 
+# US EPA AQI category breakpoints (inclusive upper bound) → label. 301+ is "Hazardous".
+_AQI_CATEGORIES: tuple[tuple[int | None, str], ...] = (
+    (50, "Good"),
+    (100, "Moderate"),
+    (150, "Unhealthy (Sensitive)"),
+    (200, "Unhealthy"),
+    (300, "Very Unhealthy"),
+    (None, "Hazardous"),
+)
+
+
+def format_aqi(us_aqi: int | None) -> str:
+    """Format a US AQI value as "AQI <n> · <category>" (EPA breakpoints); "—" if unavailable."""
+    if us_aqi is None:
+        return "—"
+    label = None
+    for upper, name in _AQI_CATEGORIES:
+        if upper is None:
+            # this is max, take the label
+            label = name
+            break
+        elif us_aqi <= upper:
+            label = name
+            break
+    return f"AQI {us_aqi} · {label}"
+
+
 def format_wind(kmh: float | None, direction: str, units: str) -> str:
     """Format a wind speed (input km/h) and direction per display ``units`` (shows "mph"/"kmph")."""
     if kmh is None:

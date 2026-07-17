@@ -185,16 +185,21 @@ declares `font: str | None` and `weather_temp_units: Literal["us","si","both"]`.
   `layout.render()` and `build_sources()` load the bundled roots on their own for direct callers.
 - **Bundled `glanceable`** lives at `render/builtins/glanceable/` — a self-contained plugin
   subpackage owning its `assets/icons/*.png` (pasted with alpha). It carries the concrete
-  **multi-provider weather adapter**: a private `_weather(data)` reconciles whichever weather
-  provider is present into a layout-local normalized draw surface (`_GlanceWeather`, `_Temp`,
-  `_GlanceHour` — current temp, wind, a resolved icon, and the hourly strip), the only surface the
-  rest of the layout touches. It **prefers `OpenMeteoData`, falling back to `NwsData`** when both are
-  configured; a dashboard with neither renders without the weather section. Icon resolution lives in
-  the adapter, per provider: NWS via the shared `weather_icon()` (keyword match on observed/forecast
-  conditions), Open-Meteo via a local `_wmo_icon(code)` WMO-code→icon map (the source keeps the raw
-  code, so the layout, not the source, owns the classification). This is the concrete realization of
-  the "a layout reconciles multiple providers in its own local adapter" principle. See
-  `docs/plugins.md` for the full contract.
+  **multi-provider weather adapter**: a private `_weather(data)` **combines** whichever weather
+  providers are present into a layout-local normalized draw surface (`_GlanceWeather`, `_Temp`,
+  `_GlanceHour` — current temp, wind, a resolved icon, the hourly strip, plus `aqi` and `alerts`),
+  the only surface the rest of the layout touches. The hero/hourly come from the **preferred**
+  provider (`OpenMeteoData`, falling back to `NwsData`); **AQI is read off Open-Meteo and alerts off
+  NWS independently**, so a dashboard configured with both shows the Open-Meteo hero *and* NWS alerts
+  (each field is simply absent — `aqi=None` / `alerts=()` — when its provider is not configured, so
+  the draw code never inspects a provider type). A dashboard with neither weather source renders no
+  weather. Icon resolution lives in the adapter, per provider: NWS via the shared `weather_icon()`
+  (keyword match on observed/forecast conditions), Open-Meteo via a local `_wmo_icon(code)`
+  WMO-code→icon map (the source keeps the raw code, so the layout, not the source, owns the
+  classification). The hero draws AQI (`format_aqi`, EPA breakpoints) and, most-severe-first
+  (`_SEVERITY_RANK`), the top active alert with a hand-drawn warning triangle and a `+N more` tail.
+  This is the concrete realization of the "a layout reconciles multiple providers in its own local
+  adapter" principle. See `docs/plugins.md` for the full contract.
 
 ### Post-process (render/postprocess.py)
 

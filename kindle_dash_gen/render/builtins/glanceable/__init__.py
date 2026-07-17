@@ -8,7 +8,7 @@ structurally identical to a private plugin: it depends only on the public
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
@@ -24,6 +24,7 @@ from kindle_dash_gen.render.toolkit import (
     Fonts,
     fit_font,
     format_apparent,
+    format_aqi,
     format_wind,
     load_asset_image,
     weather_icon,
@@ -66,13 +67,21 @@ class _GlanceHour:
 
 @dataclass(frozen=True, kw_only=True)
 class _GlanceWeather:
-    """The weather draw surface: current temp, wind, a resolved icon, and the hourly strip."""
+    """The weather draw surface, combining whatever providers are present.
+
+    Hero/hourly come from the preferred weather provider; ``aqi`` and ``alerts`` are pulled from
+    whichever provider supplies them (Open-Meteo for AQI, NWS for alerts) regardless of which one
+    drives the hero. A field is simply absent (``aqi=None`` / ``alerts=()``) when its provider is
+    not configured, so the draw code never inspects a provider type.
+    """
 
     temperature: _Temp
     wind_speed_kmh: float | None
     wind_direction: str
     icon: str  # resolved icon name (snow/rain/cloudy/sunny) — provider differences handled here
     hourly: list[_GlanceHour]
+    aqi: int | None = None  # US AQI (Open-Meteo only); None when unavailable
+    alerts: tuple[str, ...] = ()  # active-alert event names (NWS only), worst severity first
 
 
 def _norm_hours(hours: list) -> list[_GlanceHour]:
@@ -126,19 +135,35 @@ def _from_open_meteo(w: OpenMeteoData) -> _GlanceWeather:
     )
 
 
-def _weather(data: DashboardData) -> _GlanceWeather | None:
-    """Reconcile whichever weather provider is present into the layout's draw surface.
+# CAP severity → rank, so the layout surfaces the worst active alert first (all alerts are carried
+# unfiltered by the source; picking which to show is the layout's call).
+_SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1, "Unknown": 0}
 
-    Open-Meteo (global) is preferred; NWS is the fallback. A dashboard with neither renders without
-    the weather section.
+
+def _alert_events(nws: NwsData) -> tuple[str, ...]:
+    """Active-alert event names, most-severe first (ties keep source order)."""
+    ordered = sorted(nws.alerts, key=lambda a: _SEVERITY_RANK.get(a.severity, 0), reverse=True)
+    return tuple(a.event for a in ordered)
+
+
+def _weather(data: DashboardData) -> _GlanceWeather | None:
+    """Combine whichever weather providers are present into the layout's draw surface.
+
+    Hero/hourly come from the preferred provider (Open-Meteo, global; NWS fallback). AQI is pulled
+    from Open-Meteo and alerts from NWS independently, so a dashboard configured with both shows the
+    Open-Meteo hero *and* NWS alerts. A dashboard with neither weather source renders no weather.
     """
     om = data.source_data.get(OpenMeteoData)
-    if om is not None:
-        return _from_open_meteo(om)
     nws = data.source_data.get(NwsData)
-    if nws is not None:
-        return _from_nws(nws)
-    return None
+    if om is not None:
+        base = _from_open_meteo(om)
+    elif nws is not None:
+        base = _from_nws(nws)
+    else:
+        return None
+    aqi = om.us_aqi if om is not None else None
+    alerts = _alert_events(nws) if nws is not None else ()
+    return replace(base, aqi=aqi, alerts=alerts)
 
 
 def _load_icon(name: str, size: int) -> tuple[Image.Image, Image.Image]:
@@ -221,14 +246,28 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.d.text((_MARGIN, y), temp, font=temp_font, fill=INK, anchor="la")
         temp_h = int(temp_font.getbbox(temp)[3])
 
-        # wind row beneath the temperature (metric text only, no icon)
-        wind_cy = y + temp_h + 40
+        # Metric rows stacked beneath the temperature: wind, then AQI and an alert line — each drawn
+        # only when its provider supplied it (the adapter leaves them absent otherwise).
+        row_cy = y + temp_h + 40
+        row_pitch = 52
         wind = format_wind(weather.wind_speed_kmh, weather.wind_direction, self.units)
         self.d.text(
-            (_MARGIN, wind_cy), wind, font=self.fonts.get(40, "Medium"), fill=INK, anchor="lm"
+            (_MARGIN, row_cy), wind, font=self.fonts.get(40, "Medium"), fill=INK, anchor="lm"
         )
+        if weather.aqi is not None:
+            row_cy += row_pitch
+            self.d.text(
+                (_MARGIN, row_cy),
+                format_aqi(weather.aqi),
+                font=self.fonts.get(40, "Medium"),
+                fill=INK,
+                anchor="lm",
+            )
+        if len(weather.alerts) > 0:
+            row_cy += row_pitch
+            self._alert_row(_MARGIN, row_cy, weather.alerts, icon_slot)
 
-        bottom = wind_cy + 46
+        bottom = row_cy + 46
         # weather icon: as large as the section allows, vertically centered on the right (the
         # adapter already resolved the icon name, handling each provider's conditions vocabulary)
         band_h = bottom - y
@@ -238,6 +277,29 @@ class _Glanceable(Layout[GlanceableConfig]):
 
         # no rule here: separate the hourly strip from the hero with a little whitespace
         return bottom + 28
+
+    def _alert_row(self, x: float, cy: float, events: tuple[str, ...], icon_slot: int) -> None:
+        """A warning triangle + the most-severe alert's event, with a "+N more" tail if others."""
+        label = events[0]
+        if len(events) > 1:
+            label += f"  +{len(events) - 1} more"
+        tri = 17
+        self._warning(x + tri, cy, tri)
+        text_x = x + 2 * tri + 18
+        # keep the alert text clear of the right-side weather icon
+        max_w = self.w - _MARGIN - icon_slot - text_x
+        font = fit_font(self.fonts, label, "Bold", 40, max_w)
+        self.d.text((text_x, cy), label, font=font, fill=INK, anchor="lm")
+
+    def _warning(self, cx: float, cy: float, s: float) -> None:
+        """A filled warning triangle with a punched-out exclamation, centered on (cx, cy)."""
+        d = self.d
+        d.polygon(
+            (cx, cy - s, cx - s * 0.92, cy + s * 0.72, cx + s * 0.92, cy + s * 0.72), fill=INK
+        )
+        # exclamation in paper: a short bar over a dot, lower-centered in the triangle
+        d.line((cx, cy - s * 0.12, cx, cy + s * 0.22), fill=PAPER, width=max(2, int(s * 0.18)))
+        d.ellipse((cx - s * 0.12, cy + s * 0.36, cx + s * 0.12, cy + s * 0.58), fill=PAPER)
 
     def _hourly(self, y: int, weather: _GlanceWeather) -> int:
         hours = weather.hourly[:4]
