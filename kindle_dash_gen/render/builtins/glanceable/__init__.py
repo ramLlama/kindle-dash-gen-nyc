@@ -8,6 +8,7 @@ structurally identical to a private plugin: it depends only on the public
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -34,9 +35,110 @@ from kindle_dash_gen.sources.builtins.mta.model import (
     TrainArrival,
 )
 from kindle_dash_gen.sources.builtins.nws.model import NwsData
+from kindle_dash_gen.sources.builtins.open_meteo.model import OpenMeteoData
 
 _PACKAGE = "kindle_dash_gen.render.builtins.glanceable"  # this plugin's own package, for assets
 _MARGIN = 44
+
+
+# ── Weather adapter ────────────────────────────────────────────────────────────────────────────
+# This layout reconciles multiple weather providers in its own local adapter (there is no shared
+# cross-provider weather model). Each provider's own data type is normalized into the small draw
+# surface the layout actually uses; nothing else here touches a provider type.
+
+
+@dataclass(frozen=True)
+class _Temp:
+    """A normalized temperature reading (satisfies format's ``_TemperatureLike`` structurally)."""
+
+    real: float
+    feels_like: float | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _GlanceHour:
+    """One upcoming hour, normalized to what the hourly strip draws."""
+
+    time: datetime
+    temperature: _Temp
+    precip_probability: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _GlanceWeather:
+    """The weather draw surface: current temp, wind, a resolved icon, and the hourly strip."""
+
+    temperature: _Temp
+    wind_speed_kmh: float | None
+    wind_direction: str
+    icon: str  # resolved icon name (snow/rain/cloudy/sunny) — provider differences handled here
+    hourly: list[_GlanceHour]
+
+
+def _norm_hours(hours: list) -> list[_GlanceHour]:
+    """Normalize a provider's hourly forecasts (all share time/temperature/precip_probability)."""
+    return [
+        _GlanceHour(
+            time=h.time,
+            temperature=_Temp(h.temperature.real, h.temperature.feels_like),
+            precip_probability=h.precip_probability,
+        )
+        for h in hours
+    ]
+
+
+def _from_nws(w: NwsData) -> _GlanceWeather:
+    return _GlanceWeather(
+        temperature=_Temp(w.temperature.real, w.temperature.feels_like),
+        wind_speed_kmh=w.wind_speed_kmh,
+        wind_direction=w.wind_direction,
+        icon=weather_icon(w.observed_conditions, w.conditions, w.raining),
+        hourly=_norm_hours(w.hourly),
+    )
+
+
+# WMO weather-interpretation code → dashboard icon. Icon selection is the layout's job (the source
+# keeps the raw code, not a description engineered to match keywords), so the classification lives
+# here. Unlisted codes — including 0/1 (clear) — fall through to "sunny".
+_WMO_SNOW = frozenset({71, 73, 75, 77, 85, 86})
+_WMO_RAIN = frozenset({51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99})
+_WMO_CLOUDY = frozenset({2, 3, 45, 48})
+
+
+def _wmo_icon(code: int) -> str:
+    if code in _WMO_SNOW:
+        return "snow"
+    if code in _WMO_RAIN:
+        return "rain"
+    if code in _WMO_CLOUDY:
+        return "cloudy"
+    return "sunny"
+
+
+def _from_open_meteo(w: OpenMeteoData) -> _GlanceWeather:
+    # Open-Meteo has no station observation; the icon comes straight from its WMO weather code.
+    return _GlanceWeather(
+        temperature=_Temp(w.temperature.real, w.temperature.feels_like),
+        wind_speed_kmh=w.wind_speed_kmh,
+        wind_direction=w.wind_direction,
+        icon=_wmo_icon(w.weather_code),
+        hourly=_norm_hours(w.hourly),
+    )
+
+
+def _weather(data: DashboardData) -> _GlanceWeather | None:
+    """Reconcile whichever weather provider is present into the layout's draw surface.
+
+    Open-Meteo (global) is preferred; NWS is the fallback. A dashboard with neither renders without
+    the weather section.
+    """
+    om = data.source_data.get(OpenMeteoData)
+    if om is not None:
+        return _from_open_meteo(om)
+    nws = data.source_data.get(NwsData)
+    if nws is not None:
+        return _from_nws(nws)
+    return None
 
 
 def _load_icon(name: str, size: int) -> tuple[Image.Image, Image.Image]:
@@ -76,7 +178,7 @@ class _Glanceable(Layout[GlanceableConfig]):
 
     def render(self, data: DashboardData) -> Image.Image:
         y = self._title(_MARGIN, data.generated_at)
-        weather = data.source_data.get(NwsData)
+        weather = _weather(data)
         if weather is not None:
             y = self._hero(y, weather)
             y = self._hourly(y, weather)
@@ -112,7 +214,7 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.d.line((_MARGIN, rule, self.w - _MARGIN, rule), fill=INK, width=5)
         return rule + 28
 
-    def _hero(self, y: int, weather: NwsData) -> int:
+    def _hero(self, y: int, weather: _GlanceWeather) -> int:
         icon_slot = 260  # horizontal space reserved for the icon at the right
         temp = format_apparent(weather.temperature, self.units)
         temp_font = fit_font(self.fonts, temp, "Black", 190, self.w - 2 * _MARGIN - icon_slot - 30)
@@ -127,17 +229,17 @@ class _Glanceable(Layout[GlanceableConfig]):
         )
 
         bottom = wind_cy + 46
-        # weather icon: as large as the section allows, vertically centered on the right
+        # weather icon: as large as the section allows, vertically centered on the right (the
+        # adapter already resolved the icon name, handling each provider's conditions vocabulary)
         band_h = bottom - y
         icon_box = int(min(icon_slot, band_h))
         icon_cx = self.w - _MARGIN - icon_slot / 2
-        icon = weather_icon(weather.observed_conditions, weather.conditions, weather.raining)
-        self._paste_icon(icon, icon_cx, y + band_h / 2, icon_box)
+        self._paste_icon(weather.icon, icon_cx, y + band_h / 2, icon_box)
 
         # no rule here: separate the hourly strip from the hero with a little whitespace
         return bottom + 28
 
-    def _hourly(self, y: int, weather: NwsData) -> int:
+    def _hourly(self, y: int, weather: _GlanceWeather) -> int:
         hours = weather.hourly[:4]
         if len(hours) == 0:
             return y

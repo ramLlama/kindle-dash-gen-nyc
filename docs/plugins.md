@@ -149,4 +149,7 @@ The public surface for building layouts — everything the bundled `glanceable` 
   (`package = false`), so there is no install step.
 - The bundled `glanceable` at `render/builtins/glanceable/` is the worked reference: it depends only
   on this toolkit, owns its own `assets/icons/`, and registers itself — structurally identical to a
-  private plugin.
+  private plugin. It is also the concrete example of multi-provider reconciliation: a private
+  `_weather(data)` adapter normalizes whichever weather provider is present (preferring `OpenMeteoData`,
+  falling back to `NwsData`) into a layout-local draw surface, resolving the icon per provider —
+  `weather_icon()` for NWS, a local WMO-code→icon map for Open-Meteo.

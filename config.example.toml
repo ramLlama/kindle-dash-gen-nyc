@@ -12,13 +12,23 @@
 # ones you want; zero sources is valid (every render then skips, keeping the last image). Each
 # source validates its own table strictly (unknown keys are rejected). See docs/sources.md.
 
-[sources.nws]              # National Weather Service forecast
+[sources.nws]              # National Weather Service forecast (keyless, US-only)
 latitude = 40.7484
 longitude = -73.9857
 user_agent = "kindle-dash-gen (you@example.com)"   # NWS requires a User-Agent
 rollover_hour = 20     # after this local hour, high/low show the next day
 hourly_hours = 4       # number of upcoming hourly forecasts to include
 # Note: display units are NOT set here — they are a per-dashboard choice (weather_temp_units below).
+
+# Alternative weather provider: "open-meteo" (keyless, global) also supplies air quality (US AQI +
+# particulates). Configure the source(s) your enabled layouts need — the glanceable layout renders
+# whichever weather type is present, preferring open-meteo when both are configured. To use it,
+# comment out [sources.nws] above and uncomment this block (no user_agent required):
+# [sources.open-meteo]
+# latitude = 40.7484
+# longitude = -73.9857
+# rollover_hour = 20     # after this local hour, high/low show the next day
+# hourly_hours = 4       # number of upcoming hourly forecasts to include
 
 # The "mta" source: real-time subway arrivals. Stations are keyed by display name, under
 # [sources.mta.stations."Name"]. A station has one or more platform entries

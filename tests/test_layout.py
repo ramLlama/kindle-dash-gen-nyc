@@ -23,6 +23,7 @@ from kindle_dash_gen.sources.builtins.mta.model import (
     TrainArrival,
 )
 from kindle_dash_gen.sources.builtins.nws.model import HourlyForecast, NwsData, Temperature
+from kindle_dash_gen.sources.builtins.open_meteo import model as om
 
 NOW = datetime(2026, 7, 2, 20, 30, 0)
 W, H = 1072, 1448
@@ -56,6 +57,42 @@ def _weather() -> NwsData:
             for h in range(1, 5)
         ],
         as_of=NOW,
+    )
+
+
+def _open_meteo_weather() -> om.OpenMeteoData:
+    """An OpenMeteoData carrying the same drawn values as :func:`_weather` (NwsData).
+
+    Mirrors every field the glanceable weather section renders (current apparent temp, wind, the
+    icon-resolving conditions text, and the hourly strip) so the two providers must render
+    identically; the extra AQI fields are unset.
+    """
+    return om.OpenMeteoData(
+        temperature=om.Temperature(41.0, 44.0),
+        weather_code=0,  # Clear → resolves to the same "sunny" icon as the NWS fixture
+        humidity=40,
+        dewpoint=18.0,
+        wind_speed_kmh=13.0,
+        wind_direction="SW",
+        precip_probability=0,
+        raining=False,
+        high=om.Temperature(42.0, 45.0),
+        low=om.Temperature(30.0, None),
+        high_low_date=date(2026, 7, 2),
+        hourly=[
+            om.HourlyForecast(
+                time=NOW + timedelta(hours=h),
+                temperature=om.Temperature(40.0 - h, None),
+                weather_code=0,
+                precip_probability=None if h == 3 else h,
+            )
+            for h in range(1, 5)
+        ],
+        as_of=NOW,
+        us_aqi=None,
+        pm2_5=None,
+        pm10=None,
+        aerosol_optical_depth=None,
     )
 
 
@@ -113,6 +150,69 @@ def test_render_is_deterministic() -> None:
     first = _render(data)
     second = _render(data)
     assert first.tobytes() == second.tobytes()
+
+
+def test_open_meteo_renders_identically_to_nws() -> None:
+    # The glanceable adapter fully normalizes each provider, so equivalent NWS and Open-Meteo data
+    # produce a byte-identical dashboard — provider choice is invisible at the pixel level.
+    boards = MtaData(boards=_boards())
+    nws = DashboardData(generated_at=NOW, source_data={NwsData: _weather(), MtaData: boards})
+    open_meteo = DashboardData(
+        generated_at=NOW, source_data={om.OpenMeteoData: _open_meteo_weather(), MtaData: boards}
+    )
+    assert _render(nws).tobytes() == _render(open_meteo).tobytes()
+
+
+def test_adapter_prefers_open_meteo_when_both_present() -> None:
+    # With both weather sources configured, the adapter renders Open-Meteo (the global provider).
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    nws = _weather()  # wind "SW"
+    open_meteo = om.OpenMeteoData(
+        temperature=om.Temperature(10.0, 10.0),
+        weather_code=3,  # Overcast → "cloudy" icon
+        humidity=None,
+        dewpoint=None,
+        wind_speed_kmh=99.0,
+        wind_direction="NE",  # distinct from the NWS fixture's "SW"
+        precip_probability=None,
+        raining=None,
+        high=None,
+        low=None,
+        high_low_date=date(2026, 7, 2),
+        hourly=[],
+        as_of=NOW,
+        us_aqi=None,
+        pm2_5=None,
+        pm10=None,
+        aerosol_optical_depth=None,
+    )
+    data = DashboardData(generated_at=NOW, source_data={NwsData: nws, om.OpenMeteoData: open_meteo})
+    resolved = adapt(data)
+    assert resolved is not None
+    assert resolved.wind_direction == "NE"  # Open-Meteo won
+    assert resolved.icon == "cloudy"  # from Open-Meteo's "Overcast"
+
+
+@pytest.mark.parametrize(
+    "code,icon",
+    [
+        (0, "sunny"),  # clear
+        (1, "sunny"),  # mainly clear
+        (3, "cloudy"),  # overcast
+        (45, "cloudy"),  # fog
+        (61, "rain"),
+        (82, "rain"),  # violent rain showers
+        (95, "rain"),  # thunderstorm
+        (75, "snow"),
+        (86, "snow"),  # snow showers
+        (999, "sunny"),  # unknown code falls through
+    ],
+)
+def test_wmo_icon_classification(code: int, icon: str) -> None:
+    from kindle_dash_gen.render.builtins.glanceable import _wmo_icon
+
+    assert _wmo_icon(code) == icon
 
 
 def test_renders_without_weather() -> None:

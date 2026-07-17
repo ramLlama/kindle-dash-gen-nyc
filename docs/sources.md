@@ -2,8 +2,8 @@
 
 A **source** fetches one kind of data (weather, subway arrivals, …) and contributes it to the
 dashboard. Sources are plugins, exactly like render [layouts](plugins.md): the registry starts empty
-and every source — including the bundled `nws` (weather) and `mta` (subway) — registers itself the
-same way. There is no privileged builtin. You can add your own source locally without touching the
+and every source — including the bundled `nws` (US weather), `open-meteo` (global weather + air
+quality), and `mta` (subway) — registers itself the same way. There is no privileged builtin. You can add your own source locally without touching the
 app, and a private source has access to the same API the bundled ones use, so `nws`/`mta` could be
 recreated 1:1 as private plugins.
 
@@ -136,10 +136,14 @@ failure; return `None` for the benign "nothing to report this run" case.
   configuration error, so it fails fast).
 - Discovery uses import side-effects, not entry points — the project runs in place
   (`package = false`), so there is no install step.
-- The bundled `nws` (`sources/builtins/nws/`) and `mta` (`sources/builtins/mta/`) are the worked
-  references: each owns its config models and registers itself, structurally identical to a private
-  source. They split logic across three files — `model.py` (the produced data class), `source.py`
-  (the client + `Config`), and `__init__.py` (which imports `source.py` and calls `register_source`).
+- The bundled `nws` (`sources/builtins/nws/`), `open-meteo` (`sources/builtins/open_meteo/`), and
+  `mta` (`sources/builtins/mta/`) are the worked references: each owns its config models and registers
+  itself, structurally identical to a private source. They split logic across three files —
+  `model.py` (the produced data class), `source.py` (the client + `Config`), and `__init__.py` (which
+  imports `source.py` and calls `register_source`). `nws` and `open-meteo` are two independent weather
+  providers producing their own peer data types (`NwsData` vs `OpenMeteoData`, no shared model), a
+  worked example of the provider-owned-data principle above; `open-meteo` also shows an `asyncio.gather`
+  fan-out where one endpoint (air quality) degrades to `None` on failure while the other fails the source.
   A single `__init__.py` works too; discovery only imports the subpackage, so registration must be
   reachable from `__init__.py`.
 - Keep data in SI units through your data classes and round/convert only at display time (the "SI

@@ -14,7 +14,7 @@ for syncing to the device. Intended to run unattended on an interval (e.g. every
 - **uv** for env/deps. The project is `package = false` — run in place, never installed.
 - **typer** `0.26.*` — CLI framework
 - **pydantic** `2.*` — config validation (`extra="forbid"` on every model)
-- **niquests** `3.*` — HTTP client (NWS; uses `AsyncSession` for concurrent fetches);
+- **niquests** `3.*` — HTTP client (NWS + Open-Meteo; uses `AsyncSession` for concurrent fetches);
   `niquests-mock` in tests
 - **nyct-gtfs** `2.*` — MTA GTFS-realtime feed parsing
 - **pillow** `12.*` — the rendering layout and image post-processing
@@ -41,6 +41,10 @@ kindle_dash_gen/
         __init__.py    #   imports source.py -> register_source("nws", NwsSource)
         source.py      #   NwsSource + NwsConfig + NwsClient
         model.py       #   NwsData (+ Temperature, HourlyForecast) — the produced data class
+      open_meteo/      # "open-meteo" source (three-file package, keyless + global):
+        __init__.py    #   imports source.py -> register_source("open-meteo", OpenMeteoSource)
+        source.py      #   OpenMeteoSource + OpenMeteoConfig + OpenMeteoClient (async, forecast + AQI)
+        model.py       #   OpenMeteoData (+ Temperature, HourlyForecast, wmo_description) — produced data
       mta/             # "mta" source (three-file package, owns its assets):
         __init__.py    #   imports source.py -> register_source("mta", MtaSource)
         source.py      #   MtaSource (+ cli() verb `list-stations`) + MtaConfig (Platform/Station) + MtaClient
@@ -81,6 +85,14 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
 - **NwsData** (`sources/builtins/nws/model.py`) carries current conditions, today/tomorrow
   high-low, and upcoming hours. `Temperature` bundles a `real` value with an optional `feels_like`
   (apparent).
+- **OpenMeteoData** (`sources/builtins/open_meteo/model.py`) is a provider-owned peer to `NwsData`
+  (its own independent `Temperature`/`HourlyForecast`, no shared hierarchy) for the fields Open-Meteo
+  supplies: current conditions, today high/low (with rollover), upcoming hours, and a raw WMO
+  `weather_code` integer (**not** a description — the layout maps the code to an icon; the model owns
+  a `wmo_description(code)` helper for canonical text only). It also carries **air-quality fields NWS
+  has no equivalent for** — `us_aqi`, `pm2_5`, `pm10`, `aerosol_optical_depth` — which degrade to
+  `None` when only the air-quality endpoint fails. A layout that renders weather reconciles whichever
+  provider(s) are present in its own adapter (see the glanceable `_weather` adapter).
 
 ## Architecture Overview
 
@@ -96,10 +108,13 @@ returns PNG bytes) → atomic write to the dashboard's `output_path`. `run_once(
 is deliberate. The CLI bridges with `asyncio.run(...)` at each command boundary; typer commands stay
 plain sync `def`. The fit step is effectively a no-op since the layout already draws at exact size,
 so only quantization matters. The `dashboard` CLI subcommands expose each step in isolation for
-debugging.
+debugging. The "a layout reconciles multiple providers in its own adapter" principle is now realized
+concretely: the bundled `glanceable` layout has a private `_weather` adapter that normalizes
+whichever weather provider is present (preferring Open-Meteo, falling back to NWS) into a
+layout-local draw surface.
 
-See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, MTA feed
-deduplication, and the layout/post-process details.
+See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, the Open-Meteo
+concurrent forecast+AQI fetch, MTA feed deduplication, and the layout/post-process details.
 
 ## Development Workflow
 

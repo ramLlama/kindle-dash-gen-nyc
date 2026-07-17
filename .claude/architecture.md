@@ -94,6 +94,29 @@ each period's window.
 
 All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
+### Open-Meteo weather + air quality (sources/builtins/open_meteo/)
+
+The `open-meteo` source (`OpenMeteoSource` + `OpenMeteoConfig`, in `source.py`) wraps
+`OpenMeteoClient` and produces `OpenMeteoData` (in `model.py`); `OpenMeteoError` subclasses
+`SourceError`. Open-Meteo is keyless and global (no `user_agent`); `OpenMeteoConfig` is `latitude`,
+`longitude`, `rollover_hour` (default 20), `hourly_hours` (default 4). `OpenMeteoClient.fetch(lat,
+lon)` opens a `niquests.AsyncSession` (`async with`) and hits **two independent endpoints
+concurrently** via `asyncio.gather(..., return_exceptions=True)`:
+
+1. `GET /v1/forecast` (`timezone=auto`, `wind_speed_unit=kmh`, `forecast_days=2` so the evening
+   high/low rollover has tomorrow's data) → current conditions, the hourly strip, and daily hi/lo.
+2. `GET` the air-quality API → `us_aqi` + particulates (`pm2_5`, `pm10`, `aerosol_optical_depth`).
+
+`return_exceptions=True` lets both settle even when one fails (no orphaned request on a closing
+session). A **forecast** failure is re-raised as `OpenMeteoError` and isolated by the pipeline; an
+**air-quality** failure **degrades** — those fields become `None` while the rest of the report still
+lands (best-effort enrichment). Times come back naive-local (`timezone=auto`), consistent with the
+dashboard's `generated_at`. The current hour is excluded from the hourly strip (matching NWS) but its
+precip probability surfaces as "this hour"; high/low rollover mirrors the NWS logic. The produced
+`weather_code` is the **raw WMO integer** (not a description) — the model owns a `wmo_description`
+helper for canonical text, but **icon selection is deliberately left to the layout**. All values stay
+SI at full precision.
+
 ### MTA subway (sources/builtins/mta/)
 
 The `mta` source (`MtaSource` + `MtaConfig`, in `source.py`) owns its config models — `Platform` and
@@ -156,8 +179,17 @@ declares `font: str | None` and `weather_temp_units: Literal["us","si","both"]`.
   silent no-op, but a present-but-broken plugin propagates. `pipeline` passes `cfg.plugins_path`;
   `layout.render()` and `build_sources()` load the bundled roots on their own for direct callers.
 - **Bundled `glanceable`** lives at `render/builtins/glanceable/` — a self-contained plugin
-  subpackage owning its `assets/icons/*.png` (chosen by `format.weather_icon()`, pasted with alpha).
-  See `docs/plugins.md` for the full contract.
+  subpackage owning its `assets/icons/*.png` (pasted with alpha). It carries the concrete
+  **multi-provider weather adapter**: a private `_weather(data)` reconciles whichever weather
+  provider is present into a layout-local normalized draw surface (`_GlanceWeather`, `_Temp`,
+  `_GlanceHour` — current temp, wind, a resolved icon, and the hourly strip), the only surface the
+  rest of the layout touches. It **prefers `OpenMeteoData`, falling back to `NwsData`** when both are
+  configured; a dashboard with neither renders without the weather section. Icon resolution lives in
+  the adapter, per provider: NWS via the shared `weather_icon()` (keyword match on observed/forecast
+  conditions), Open-Meteo via a local `_wmo_icon(code)` WMO-code→icon map (the source keeps the raw
+  code, so the layout, not the source, owns the classification). This is the concrete realization of
+  the "a layout reconciles multiple providers in its own local adapter" principle. See
+  `docs/plugins.md` for the full contract.
 
 ### Post-process (render/postprocess.py)
 
@@ -185,8 +217,10 @@ changes the pixels.
 - `sources: dict[str, dict[str, Any]]` — the raw `[sources.<name>]` tables. `Config` does **not**
   validate their contents; after plugin discovery, `build_sources()` validates each slice against
   its plugin's own `Config` model (the `nws` plugin's `NwsConfig`: `latitude`, `longitude`,
-  `user_agent`, `rollover_hour`, `hourly_hours`; the `mta` plugin's `MtaConfig`: `stations`, whose
-  `Station`/`Platform` models also live in that plugin). An unknown source name or key fails fast
+  `user_agent`, `rollover_hour`, `hourly_hours`; the keyless `open-meteo` plugin's `OpenMeteoConfig`:
+  `latitude`, `longitude`, `rollover_hour`, `hourly_hours` — no `user_agent`; the `mta` plugin's
+  `MtaConfig`: `stations`, whose `Station`/`Platform` models also live in that plugin). An unknown
+  source name or key fails fast
   there. Zero sources is valid. The old top-level `[location]`, `[weather]`, `[stations.*]` sections
   are gone.
 - `Dashboard` — the **output spec** only: `layout` (name, default `"glanceable"`), `output_path`,
