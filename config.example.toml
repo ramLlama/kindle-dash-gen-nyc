@@ -94,6 +94,8 @@ post_process_method = "resize"
 
 # The glanceable layout's own config (its schema — unknown keys are rejected).
 [dashboards.main.layout_config]
+# Header text at the top-left of the dashboard (a city or place name). Required — no default.
+title = "NYC"
 # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
 weather_temp_units = "both"
 # font: system font family (fontconfig). Omit to let the layout choose its own default (glanceable

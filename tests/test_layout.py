@@ -138,7 +138,7 @@ def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     return DashboardData(generated_at=NOW, source_data=source_data)
 
 
-_CONFIG = {"font": "Adwaita Sans", "weather_temp_units": "both"}
+_CONFIG = {"title": "NYC", "font": "Adwaita Sans", "weather_temp_units": "both"}
 
 
 def _render(data: DashboardData) -> Image.Image:
@@ -309,8 +309,27 @@ def test_renders_without_boards() -> None:
 def test_font_none_falls_back_to_default() -> None:
     # An unspecified font (None) resolves to the layout's default (glanceable's DEFAULT_FONT), so
     # the render still succeeds at full size rather than failing to resolve a font.
-    img = render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={})
+    img = render(
+        _dashboard(), width=W, height=H, layout="glanceable", layout_config={"title": "NYC"}
+    )
     assert img.size == (W, H)
+
+
+def test_title_is_required() -> None:
+    # The header title has no default; a layout_config without it fails validation.
+    with pytest.raises(ValidationError):
+        render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={})
+
+
+def test_custom_title_renders() -> None:
+    # A configured title changes the header without otherwise altering the render.
+    base = _render(_dashboard()).tobytes()
+    cfg = dict(_CONFIG)
+    cfg["title"] = "Brooklyn"
+    other = render(
+        _dashboard(), width=W, height=H, layout="glanceable", layout_config=cfg
+    ).tobytes()
+    assert other != base  # the header pixels differ
 
 
 def test_unknown_layout_raises() -> None:
@@ -321,7 +340,13 @@ def test_unknown_layout_raises() -> None:
 def test_unknown_layout_config_key_is_rejected() -> None:
     # A layout owns its config (extra="forbid"), so an unknown layout_config key fails fast.
     with pytest.raises(ValidationError):
-        render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={"bogus": 1})
+        render(
+            _dashboard(),
+            width=W,
+            height=H,
+            layout="glanceable",
+            layout_config={"title": "NYC", "bogus": 1},
+        )
 
 
 def test_unresolvable_font_raises() -> None:
@@ -333,7 +358,7 @@ def test_unresolvable_font_raises() -> None:
             width=W,
             height=H,
             layout="glanceable",
-            layout_config={"font": "No Such Font Family 9000"},
+            layout_config={"title": "NYC", "font": "No Such Font Family 9000"},
         )
 
 

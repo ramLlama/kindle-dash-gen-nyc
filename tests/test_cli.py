@@ -33,6 +33,9 @@ user_agent = "test-agent (test@example.com)"
 output_path = "./out/dashboard.png"
 width = 100
 height = 140
+
+[dashboards.main.layout_config]
+title = "Test"
 """
 
 
@@ -50,6 +53,7 @@ def _two_dashboard_text(first_path: Path, second_path: Path) -> str:
     second = (
         f'[dashboards.second]\noutput_path = "{second_path.as_posix()}"\n'
         "width = 100\nheight = 140\n"
+        '[dashboards.second.layout_config]\ntitle = "Test"\n'
     )
     return f"{main}\n{second}"
 
@@ -479,7 +483,9 @@ def test_source_local_plugin_is_first_class(tmp_path) -> None:
 def test_bad_layout_config_key_fails_fast(tmp_path) -> None:
     # _config eagerly validates each dashboard's layout_config against its layout, so a bad key
     # fails the command up front (before any fetch/render), not mid-run.
-    text = CONFIG + "\n[dashboards.main.layout_config]\nbogus = 1\n"
+    # CONFIG already ends with the [dashboards.main.layout_config] table, so append the bad key
+    # under it (a second table header would be a TOML duplicate, not the validation error we want).
+    text = CONFIG + "bogus = 1\n"
     config_path = tmp_path / "config.toml"
     config_path.write_text(text)
     result = runner.invoke(app, ["--config", str(config_path), "run", "--one-shot"])

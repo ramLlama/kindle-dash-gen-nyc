@@ -215,7 +215,8 @@ subcommand loads it on demand via `_config(ctx)`.
   legitimately skips). A `Dashboard` owns the **output spec** — `layout` (name), `output_path`,
   `width`, `height`, `gray_levels`, `post_process_method`, `rotate` — while the layout owns **how it
   draws**: render knobs like the font and display temperature units live in `layout_config` (the
-  bundled `glanceable`'s `GlanceableConfig` has `font` and `weather_temp_units`), not on the
+  bundled `glanceable`'s `GlanceableConfig` has a **required** `title` header plus `font` and
+  `weather_temp_units`), not on the
   dashboard.
 - **Milestone-per-commit.** History is built as discrete milestones (data sources reworked into
   discovered plugins; the latest removed the LLM/OpenRouter backend entirely and made layouts own

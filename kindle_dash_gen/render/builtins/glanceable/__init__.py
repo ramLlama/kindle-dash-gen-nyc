@@ -180,6 +180,8 @@ class GlanceableConfig(BaseModel):
 
     # System font family (resolved via fontconfig). None = unspecified → the app-wide default.
     font: str | None = None
+    # Header text shown at the top-left of the dashboard (e.g. a city or place name). Required.
+    title: str
     # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
     weather_temp_units: Literal["us", "si", "both"] = "us"
 
@@ -198,6 +200,7 @@ class _Glanceable(Layout[GlanceableConfig]):
         # No layout-specific font opinion: fall back to the app-wide default when unspecified.
         self.fonts = Fonts(config.font if config.font is not None else DEFAULT_FONT)
         self.units = config.weather_temp_units
+        self.title = config.title
         self.img = Image.new("L", (width, height), PAPER)
         self.d = ImageDraw.Draw(self.img)
 
@@ -223,10 +226,10 @@ class _Glanceable(Layout[GlanceableConfig]):
         d.ellipse((cx - s * 0.62, cy - s * 0.25, cx + s * 0.62, cy + s * 0.75), fill=INK)
 
     def _title(self, y: int, when: datetime) -> int:
-        nyc = self.fonts.get(78, "Black")
-        self.d.text((_MARGIN, y), "NYC", font=nyc, fill=INK, anchor="la")
-        # sit the time on the same baseline as "NYC" (ascent below the cap line)
-        baseline = y + nyc.getmetrics()[0]
+        title_font = self.fonts.get(78, "Black")
+        self.d.text((_MARGIN, y), self.title, font=title_font, fill=INK, anchor="la")
+        # sit the time on the same baseline as the title (ascent below the cap line)
+        baseline = y + title_font.getmetrics()[0]
         label = when.strftime("%a %b %-d, %-I:%M %p")
         self.d.text(
             (self.w - _MARGIN, baseline),

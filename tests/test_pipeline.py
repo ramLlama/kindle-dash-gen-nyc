@@ -28,7 +28,14 @@ CONFIG: dict = {
         },
         "mta": {"stations": {"Union Sq": {"platforms": [{"lines": ["N", "Q"], "stop_id": "R20"}]}}},
     },
-    "dashboards": {"main": {"output_path": "out/dashboard.png", "width": 100, "height": 140}},
+    "dashboards": {
+        "main": {
+            "output_path": "out/dashboard.png",
+            "width": 100,
+            "height": 140,
+            "layout_config": {"title": "Test"},
+        }
+    },
     "schedule": {"interval_minutes": 5},
 }
 
