@@ -82,8 +82,10 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
   merges the N/Q/R/W, 4/5/6, and L platforms into one board. Boards are **uncapped** — the layout
   decides how many arrivals to show at render.
 - **Direction** is a `StrEnum` with values `"N"`/`"S"` (GTFS uptown/downtown, nominal for the L).
-- **NwsData** (`sources/builtins/nws/model.py`) carries current conditions, today/tomorrow
-  high-low, upcoming hours, and active weather **alerts** (`list[WeatherAlert]`, defaults to `[]`).
+- **NwsData** (`sources/builtins/nws/model.py`) carries current conditions, `today` and `tomorrow`
+  (each a `DailyHighLow(day, high, low)` — both days always present, readings `None` when unknown;
+  each source owns its own copy of this class, like every other type), upcoming hours, and active
+  weather **alerts** (`list[WeatherAlert]`, defaults to `[]`).
   `Temperature` bundles a `real` value with an optional `feels_like` (apparent). `WeatherAlert`
   mirrors the CAP alert fields NWS supplies (`event`, `category`, `severity`, `certainty`,
   `urgency`, `status`, `message_type`, `area_desc`, `sender_name`, `headline`, `description`,
@@ -91,7 +93,7 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
   carried unfiltered (no severity knob) and are unused by any layout until a layout draws them.
 - **OpenMeteoData** (`sources/builtins/open_meteo/model.py`) is a provider-owned peer to `NwsData`
   (its own independent `Temperature`/`HourlyForecast`, no shared hierarchy) for the fields Open-Meteo
-  supplies: current conditions, today high/low (with rollover), upcoming hours, and a raw WMO
+  supplies: current conditions, `today`/`tomorrow` high/low, upcoming hours, and a raw WMO
   `weather_code` integer (**not** a description — the layout maps the code to an icon; the model owns
   a `wmo_description(code)` helper for canonical text only). It also carries **air-quality fields NWS
   has no equivalent for** — `us_aqi`, `pm2_5`, `pm10`, `aerosol_optical_depth` — which degrade to
@@ -149,6 +151,11 @@ subcommand loads it on demand via `_config(ctx)`.
 - **SI internally, round at display.** All weather data is kept in SI (°C, km/h) at full
   precision through the models and sources. Conversion and rounding happen only in `format.py`
   at output time. Do not round or convert units inside sources or models.
+- **Sources report data; layouts make display decisions.** A source reports every value the provider
+  gives and `None` where a value is genuinely unknown — it never picks *which* value the dashboard
+  should show. Don't add a config knob to a source that encodes a display choice (a `rollover_hour`
+  knob deciding whether high/low meant today or tomorrow was removed for exactly this reason). The
+  worked example and full rule live in `docs/sources.md` ("Report data, not display decisions").
 - **Multiple dashboards, one fetch.** Config has `dashboards: dict[str, Dashboard]` (named
   `[dashboards.<name>]` tables). `gather()` runs once and every dashboard renders from that shared
   data to its own `output_path`.

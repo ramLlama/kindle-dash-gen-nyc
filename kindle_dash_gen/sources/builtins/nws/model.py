@@ -60,6 +60,20 @@ class HourlyForecast:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DailyHighLow:
+    """One calendar day's high/low (the day is local to the forecast location).
+
+    Either reading is ``None`` when the feed no longer carries that period — NWS drops a day's
+    daytime period once it has passed, so by evening today's high is genuinely unknown rather than
+    substitutable with a later day's.
+    """
+
+    day: date
+    high: Temperature | None  # daytime high
+    low: Temperature | None  # overnight low
+
+
+@dataclass(frozen=True, kw_only=True)
 class NwsData:
     """Current conditions plus near-term forecast for one location, from NWS (all SI units)."""
 
@@ -72,9 +86,9 @@ class NwsData:
     precip_probability: int | None  # % chance of precip this hour
     raining: bool | None  # from latest station observation; None if unavailable
     observed_conditions: str | None  # station text description, e.g. "Light Rain"
-    high: Temperature | None  # daytime high for high_low_date
-    low: Temperature | None  # overnight low for high_low_date
-    high_low_date: date  # the day the high/low apply to
+    # Both days are always reported; choosing which to display is a layout decision.
+    today: DailyHighLow
+    tomorrow: DailyHighLow
     forecast: str  # near-term short forecast text
     forecast_name: str  # period label, e.g. "This Afternoon", "Tonight"
     hourly: list[HourlyForecast]  # upcoming hours

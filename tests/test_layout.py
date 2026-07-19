@@ -25,6 +25,7 @@ from kindle_dash_gen.sources.builtins.mta.model import (
     TrainArrival,
 )
 from kindle_dash_gen.sources.builtins.nws.model import (
+    DailyHighLow,
     HourlyForecast,
     NwsData,
     Temperature,
@@ -49,9 +50,12 @@ def _weather() -> NwsData:
         precip_probability=0,
         raining=False,
         observed_conditions="Clear",
-        high=Temperature(42.0, 45.0),
-        low=Temperature(30.0, None),
-        high_low_date=date(2026, 7, 2),
+        today=DailyHighLow(
+            day=date(2026, 7, 2), high=Temperature(42.0, 45.0), low=Temperature(30.0, None)
+        ),
+        tomorrow=DailyHighLow(
+            day=date(2026, 7, 3), high=Temperature(40.0, None), low=Temperature(28.0, None)
+        ),
         forecast="Clear",
         forecast_name="Tonight",
         hourly=[
@@ -83,9 +87,12 @@ def _open_meteo_weather() -> om.OpenMeteoData:
         wind_direction="SW",
         precip_probability=0,
         raining=False,
-        high=om.Temperature(42.0, 45.0),
-        low=om.Temperature(30.0, None),
-        high_low_date=date(2026, 7, 2),
+        today=om.DailyHighLow(
+            day=date(2026, 7, 2), high=om.Temperature(42.0, 45.0), low=om.Temperature(30.0, None)
+        ),
+        tomorrow=om.DailyHighLow(
+            day=date(2026, 7, 3), high=om.Temperature(40.0, None), low=om.Temperature(28.0, None)
+        ),
         hourly=[
             om.HourlyForecast(
                 time=NOW + timedelta(hours=h),
@@ -184,9 +191,8 @@ def test_adapter_prefers_open_meteo_when_both_present() -> None:
         wind_direction="NE",  # distinct from the NWS fixture's "SW"
         precip_probability=None,
         raining=None,
-        high=None,
-        low=None,
-        high_low_date=date(2026, 7, 2),
+        today=DailyHighLow(day=date(2026, 7, 2), high=None, low=None),
+        tomorrow=DailyHighLow(day=date(2026, 7, 3), high=None, low=None),
         hourly=[],
         as_of=NOW,
         us_aqi=None,

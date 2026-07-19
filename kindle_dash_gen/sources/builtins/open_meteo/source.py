@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 from kindle_dash_gen.sources.registry import Source
 from kindle_dash_gen.sources.toolkit import SourceError
 
-from .model import HourlyForecast, OpenMeteoData, Temperature
+from .model import DailyHighLow, HourlyForecast, OpenMeteoData, Temperature
 
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
 AQI_API = "https://air-quality-api.open-meteo.com/v1/air-quality"
@@ -40,8 +40,7 @@ class OpenMeteoError(SourceError):
 class OpenMeteoClient:
     """Client for the Open-Meteo forecast + air-quality APIs. All returned data is in SI units."""
 
-    def __init__(self, rollover_hour: int = 20, hourly_hours: int = 4) -> None:
-        self._rollover_hour = rollover_hour
+    def __init__(self, hourly_hours: int = 4) -> None:
         self._hourly_hours = hourly_hours
 
     async def _get_json(
@@ -87,7 +86,7 @@ class OpenMeteoClient:
             "apparent_temperature_max,apparent_temperature_min",
             "timezone": "auto",
             "wind_speed_unit": "kmh",
-            "forecast_days": "2",  # today + tomorrow, so the evening high/low rollover has data
+            "forecast_days": "2",  # today + tomorrow: both days' high/low are always reported
         }
         return await self._get_json(session, FORECAST_API, params)
 
@@ -111,7 +110,9 @@ class OpenMeteoClient:
             as_of = datetime.fromisoformat(cur["time"])
             hourly, this_hour_precip = self._hours(forecast["hourly"], as_of)
             precip = _float(cur.get("precipitation"))
-            high, low, high_low_date = self._high_low(forecast["daily"], as_of)
+            # "Today" is the first day the daily arrays cover (local to the coordinates, since the
+            # request uses timezone=auto).
+            today = date.fromisoformat(forecast["daily"]["time"][0])
             apparent = _float(cur.get("apparent_temperature"))
             temperature = Temperature(cur["temperature_2m"], apparent)
             return OpenMeteoData(
@@ -123,9 +124,8 @@ class OpenMeteoClient:
                 wind_direction=_cardinal(cur.get("wind_direction_10m")),
                 precip_probability=this_hour_precip,
                 raining=(precip > 0) if precip is not None else None,
-                high=high,
-                low=low,
-                high_low_date=high_low_date,
+                today=_day_high_low(forecast["daily"], today),
+                tomorrow=_day_high_low(forecast["daily"], today + timedelta(days=1)),
                 hourly=hourly,
                 as_of=as_of,
                 us_aqi=_int(aqi.get("us_aqi")),
@@ -167,23 +167,28 @@ class OpenMeteoClient:
                 )
         return upcoming, this_hour_precip
 
-    def _high_low(
-        self, daily: dict, as_of: datetime
-    ) -> tuple[Temperature | None, Temperature | None, date]:
-        """Today's high/low, rolling to tomorrow after ``rollover_hour`` (apparent = day's max)."""
-        days = [date.fromisoformat(d) for d in daily["time"]]
-        target = as_of.date()
-        if as_of.hour >= self._rollover_hour:
-            target = target + timedelta(days=1)
-        # Fall back to the first available day if the target isn't in range (short forecast window).
-        idx = days.index(target) if target in days else 0
-        high = Temperature(
-            daily["temperature_2m_max"][idx], _float(daily["apparent_temperature_max"][idx])
-        )
-        low = Temperature(
-            daily["temperature_2m_min"][idx], _float(daily["apparent_temperature_min"][idx])
-        )
-        return high, low, days[idx]
+
+def _day_high_low(daily: dict, day: date) -> DailyHighLow:
+    """The high/low for exactly ``day`` (apparent = that day's apparent max/min).
+
+    A day outside the forecast window reports ``None`` readings rather than substituting another
+    day's, so the ``day`` field is always truthful. A ``null`` reading degrades the same way, rather
+    than building a ``Temperature`` whose ``real`` is ``None`` despite being typed ``float``.
+    """
+    days = [date.fromisoformat(d) for d in daily["time"]]
+    if day not in days:
+        return DailyHighLow(day=day, high=None, low=None)
+    idx = days.index(day)
+    return DailyHighLow(
+        day=day,
+        high=_reading(daily["temperature_2m_max"][idx], daily["apparent_temperature_max"][idx]),
+        low=_reading(daily["temperature_2m_min"][idx], daily["apparent_temperature_min"][idx]),
+    )
+
+
+def _reading(real: float | None, apparent: float | None) -> Temperature | None:
+    """A Temperature, or ``None`` when the provider reported no actual value."""
+    return None if real is None else Temperature(real, _float(apparent))
 
 
 def _cardinal(degrees: float | None) -> str:
@@ -210,7 +215,6 @@ class OpenMeteoConfig(BaseModel):
 
     latitude: float
     longitude: float
-    rollover_hour: int = 20  # after this local hour, high/low show the next day
     hourly_hours: int = 4  # number of upcoming hourly forecasts to include
 
 
@@ -221,7 +225,7 @@ class OpenMeteoSource(Source[OpenMeteoConfig]):
 
     def __init__(self, config: OpenMeteoConfig) -> None:
         self._config = config
-        self._client = OpenMeteoClient(config.rollover_hour, config.hourly_hours)
+        self._client = OpenMeteoClient(config.hourly_hours)
 
     async def fetch(self, now: datetime) -> OpenMeteoData:
         return await self._client.fetch(self._config.latitude, self._config.longitude)

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from kindle_dash_gen.sources.registry import Source
 from kindle_dash_gen.sources.toolkit import SourceError
 
-from .model import HourlyForecast, NwsData, Temperature, WeatherAlert
+from .model import DailyHighLow, HourlyForecast, NwsData, Temperature, WeatherAlert
 
 NWS_API = "https://api.weather.gov"
 
@@ -48,14 +48,8 @@ _ALERT_ITEM_SWALLOW = (KeyError, TypeError)
 class NwsClient:
     """Client for the NWS forecast API. All returned data is in SI units."""
 
-    def __init__(
-        self,
-        user_agent: str,
-        rollover_hour: int = 20,
-        hourly_hours: int = 4,
-    ) -> None:
+    def __init__(self, user_agent: str, hourly_hours: int = 4) -> None:
         self._user_agent = user_agent
-        self._rollover_hour = rollover_hour
         self._hourly_hours = hourly_hours
 
     async def _get_json(
@@ -114,11 +108,17 @@ class NwsClient:
             if len(hourly_periods) == 0 or len(daily_periods) == 0:
                 raise WeatherError("NWS returned no forecast periods")
             now = hourly_periods[0]
-            today = daily_periods[0]
+            first_period = daily_periods[0]
             as_of = datetime.fromisoformat(now["startTime"])
-            high, low, high_low_date = self._high_low(
-                daily_periods, datetime.now(as_of.tzinfo), apparent
-            )
+            # Anchor "today" on the current hour's local date, not on the first daily period's.
+            # The first daily period is usually today's, but only because NWS truncates an
+            # in-progress period's startTime to roughly now; if it ever emitted the untruncated
+            # start, between midnight and ~06:00 the first period would be the *previous* evening's
+            # night period and this would silently be yesterday. `as_of` carries the location's UTC
+            # offset, so its date is unambiguously the local calendar day — and it matches how the
+            # open-meteo source anchors (`daily.time[0]` under `timezone=auto`), so the two
+            # providers agree on "today" for a layout that mixes them.
+            today = as_of.date()
             return NwsData(
                 temperature=Temperature(now["temperature"], _apparent_at(apparent, as_of)),
                 conditions=now["shortForecast"],
@@ -129,11 +129,10 @@ class NwsClient:
                 precip_probability=_percent(now.get("probabilityOfPrecipitation")),
                 raining=raining,
                 observed_conditions=observed,
-                high=high,
-                low=low,
-                high_low_date=high_low_date,
-                forecast=today["shortForecast"],
-                forecast_name=today["name"],
+                today=_day_high_low(daily_periods, today, apparent),
+                tomorrow=_day_high_low(daily_periods, today + timedelta(days=1), apparent),
+                forecast=first_period["shortForecast"],
+                forecast_name=first_period["name"],
                 hourly=self._upcoming_hours(hourly_periods, apparent),
                 as_of=as_of,
                 location_name=location_name,
@@ -141,26 +140,6 @@ class NwsClient:
             )
         except (KeyError, ValueError) as exc:
             raise WeatherError("unexpected NWS forecast response") from exc
-
-    def _high_low(
-        self, daily_periods: list[dict], now_local: datetime, apparent: ApparentSeries
-    ) -> tuple[Temperature | None, Temperature | None, date]:
-        """Pick the target day's high/low, rolling to the next day after ``rollover_hour``."""
-        target = now_local.date()
-        if now_local.hour >= self._rollover_hour:
-            target = target + timedelta(days=1)
-        # Use the first daytime/nighttime periods on or after the target day (today's
-        # daytime period may already have expired from the feed by evening).
-        high_period = next(
-            (p for p in daily_periods if p["isDaytime"] and _pdate(p) >= target), None
-        )
-        low_period = next(
-            (p for p in daily_periods if not p["isDaytime"] and _pdate(p) >= target), None
-        )
-        # Apparent high/low are the max/min feels-like across the period's time window.
-        high = _period_temperature(high_period, apparent, max)
-        low = _period_temperature(low_period, apparent, min)
-        return high, low, target
 
     def _upcoming_hours(
         self, hourly_periods: list[dict], apparent: ApparentSeries
@@ -311,6 +290,24 @@ def _period_temperature(
     return Temperature(period["temperature"], feels_like)
 
 
+def _day_high_low(daily_periods: list[dict], day: date, apparent: ApparentSeries) -> DailyHighLow:
+    """The high/low for exactly ``day``, from its daytime and nighttime periods.
+
+    Matches the day exactly rather than falling forward to the next available period. NWS drops a
+    day's daytime period once it has passed, so from that evening today's high is genuinely unknown
+    — reporting ``None`` is honest, where falling forward would return *tomorrow's* high labelled
+    with today's date.
+    """
+    high_period = next((p for p in daily_periods if p["isDaytime"] and _pdate(p) == day), None)
+    low_period = next((p for p in daily_periods if not p["isDaytime"] and _pdate(p) == day), None)
+    # Apparent high/low are the max/min feels-like across the period's time window.
+    return DailyHighLow(
+        day=day,
+        high=_period_temperature(high_period, apparent, max),
+        low=_period_temperature(low_period, apparent, min),
+    )
+
+
 _WIND_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
@@ -363,7 +360,6 @@ class NwsConfig(BaseModel):
     latitude: float
     longitude: float
     user_agent: str  # NWS requires a User-Agent identifying the caller
-    rollover_hour: int = 20  # after this local hour, high/low show the next day
     hourly_hours: int = 4  # number of upcoming hourly forecasts to include
 
 
@@ -374,7 +370,7 @@ class NwsSource(Source[NwsConfig]):
 
     def __init__(self, config: NwsConfig) -> None:
         self._config = config
-        self._client = NwsClient(config.user_agent, config.rollover_hour, config.hourly_hours)
+        self._client = NwsClient(config.user_agent, config.hourly_hours)
 
     async def fetch(self, now: datetime) -> NwsData:
         return await self._client.fetch(self._config.latitude, self._config.longitude)

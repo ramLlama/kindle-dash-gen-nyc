@@ -34,8 +34,10 @@ Run with `uv run pytest` (config in `pyproject.toml`: `testpaths = ["tests"]`,
   slice, and fail-fast on an unknown source name or an invalid slice.
 - `test_layout.py` — the layout registry: `validate_layout`/`build_layout` config validation,
   dispatch, `Fonts` resolution, and `LayoutError`.
-- `test_weather.py` — NWS (`nws` source) multi-step fetch parsing, high/low rollover, apparent-temp
-  series, observation/raining derivation.
+- `test_weather.py` — NWS (`nws` source) multi-step fetch parsing, `_day_high_low` (exact-day match,
+  including the evening case where an expired daytime period must report `None` rather than borrow
+  tomorrow's high), the `as_of`-anchored "today", apparent-temp series, observation/raining
+  derivation.
 - `test_mta.py` — MTA (`mta` source) feed dedup/reuse, platform merging, per-direction sort, error
   paths.
 - `test_postprocess.py` — grayscale/fit/quantize, each `method`, gray-level LUT.

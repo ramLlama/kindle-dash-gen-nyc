@@ -15,7 +15,7 @@ live in `pyproject.toml` (`[tool.ruff]`).
 ## Naming
 
 - Modules and functions: `snake_case`. Classes: `PascalCase`. Constants: `UPPER_SNAKE`.
-- **Module-private helpers are prefixed with `_`** (e.g. `_atomic_write`, `_high_low`,
+- **Module-private helpers are prefixed with `_`** (e.g. `_atomic_write`, `_day_high_low`,
   `_quantize_lut`, `_fit`). Public API is the un-prefixed surface.
 - Domain error classes are named `<Thing>Error`. Source-fetch errors subclass the shared
   `SourceError` (in `sources/toolkit.py`) so the pipeline can isolate any source generically —
@@ -49,7 +49,8 @@ live in `pyproject.toml` (`[tool.ruff]`).
 
 - Comment the *why* and non-obvious *what*, not the line-by-line obvious. Good examples in the
   codebase: the protobuf-override note in `pyproject.toml`, the "NWS rejects >4 decimal places"
-  note, the rollover-hour rationale, the atomic-write explanation.
+  note, the "anchor today on `as_of`, not the first daily period" rationale in `nws/source.py`, the
+  atomic-write explanation.
 - Do not leave commented-out code or `TODO` placeholders.
 
 ## Python-specific conventions (from global user prefs, honored here)

@@ -72,6 +72,18 @@ class HourlyForecast:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DailyHighLow:
+    """One calendar day's high/low (the day is local to the forecast location).
+
+    Readings are ``None`` when the forecast window doesn't reach that day.
+    """
+
+    day: date
+    high: Temperature | None
+    low: Temperature | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class OpenMeteoData:
     """Current conditions, near-term forecast, and air quality for one location (all SI units).
 
@@ -89,9 +101,9 @@ class OpenMeteoData:
     wind_direction: str  # cardinal, e.g. "SW" (empty if unknown)
     precip_probability: int | None  # % chance of precip this hour
     raining: bool | None  # derived from current precipitation; None if unavailable
-    high: Temperature | None  # daytime high for high_low_date
-    low: Temperature | None  # overnight low for high_low_date
-    high_low_date: date  # the day the high/low apply to
+    # Both days are always reported; choosing which to display is a layout decision.
+    today: DailyHighLow
+    tomorrow: DailyHighLow
     hourly: list[HourlyForecast]  # upcoming hours
     as_of: datetime
     # Air quality (from the air-quality endpoint; all None if that fetch failed).

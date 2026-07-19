@@ -1,13 +1,20 @@
 """Tests for the NWS weather source."""
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 
 import niquests_mock as nm
 import pytest
+from pydantic import ValidationError
 
 from kindle_dash_gen.sources.builtins.nws.model import Temperature
-from kindle_dash_gen.sources.builtins.nws.source import NwsClient, WeatherError, _is_raining
+from kindle_dash_gen.sources.builtins.nws.source import (
+    NwsClient,
+    NwsConfig,
+    WeatherError,
+    _day_high_low,
+    _is_raining,
+)
 
 LAT, LON = 40.7484, -73.9857
 POINTS_URL = f"https://api.weather.gov/points/{LAT:.4f},{LON:.4f}"
@@ -299,22 +306,80 @@ _HL_APPARENT = [
 ]
 
 
-def test_high_low_uses_today_before_rollover() -> None:
+def test_day_high_low_pairs_the_days_daytime_and_nighttime_periods() -> None:
     periods = FORECAST["properties"]["periods"]
-    before = datetime.fromisoformat("2026-07-01T15:00:00-04:00")
-    high, low, day = _client()._high_low(periods, before, _HL_APPARENT)
-    assert high == Temperature(34, 42.0)  # actual high, apparent = window max
-    assert low == Temperature(24, 26.5)  # actual low, apparent = window min
-    assert day.isoformat() == "2026-07-01"
+    day = date.fromisoformat("2026-07-01")
+    result = _day_high_low(periods, day, _HL_APPARENT)
+    assert result.day == day
+    assert result.high == Temperature(34, 42.0)  # actual high, apparent = window max
+    assert result.low == Temperature(24, 26.5)  # actual low, apparent = window min
 
 
-def test_high_low_rolls_to_next_day_after_rollover() -> None:
+def test_day_high_low_without_apparent_data() -> None:
     periods = FORECAST["properties"]["periods"]
-    after = datetime.fromisoformat("2026-07-01T21:00:00-04:00")  # past default rollover 20:00
-    high, low, day = _client()._high_low(periods, after, [])  # no apparent data
-    assert high == Temperature(38, None)
-    assert low == Temperature(26, None)
-    assert day.isoformat() == "2026-07-02"
+    result = _day_high_low(periods, date.fromisoformat("2026-07-02"), [])
+    assert result.high == Temperature(38, None)
+    assert result.low == Temperature(26, None)
+
+
+def test_day_high_low_is_none_for_a_day_not_in_the_feed() -> None:
+    periods = FORECAST["properties"]["periods"]
+    result = _day_high_low(periods, date.fromisoformat("2026-07-09"), [])
+    assert result.day == date.fromisoformat("2026-07-09")
+    assert result.high is None
+    assert result.low is None
+
+
+def test_expired_daytime_period_does_not_borrow_tomorrows_high() -> None:
+    """The evening case: today's daytime period has dropped out of the feed.
+
+    Today's high is then genuinely unknown. Reporting ``None`` is honest; the previous
+    fall-forward behavior returned *tomorrow's* 38 labelled with today's date.
+    """
+    # Feed starting at "Tonight" — today's daytime period is gone, its night period remains.
+    evening = FORECAST["properties"]["periods"][1:]
+    today = _day_high_low(evening, date.fromisoformat("2026-07-01"), [])
+    assert today.high is None  # not 38 borrowed from tomorrow
+    assert today.low == Temperature(24, None)  # tonight's low still known
+    tomorrow = _day_high_low(evening, date.fromisoformat("2026-07-02"), [])
+    assert tomorrow.high == Temperature(38, None)
+    assert tomorrow.low == Temperature(26, None)
+
+
+def test_fetch_anchors_today_on_the_current_hour_not_the_first_daily_period() -> None:
+    # Drives the evening feed end-to-end. "Today" comes from the hourly period's local date, so a
+    # nighttime-only first daily period cannot shift the anchor (it would under `_pdate(first)` if
+    # NWS ever stopped truncating an in-progress period's startTime).
+    evening_forecast = {"properties": {"periods": FORECAST["properties"]["periods"][1:]}}
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router)
+        router.get(FORECAST_URL, params={"units": "si"}).respond(json=evening_forecast)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    assert r.today.day.isoformat() == "2026-07-01"
+    assert r.today.high is None
+    assert r.today.low.real == 24
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+    assert r.tomorrow.high.real == 38
+
+
+def test_fetch_returns_both_days_high_low() -> None:
+    # The source makes no display decision about which day to show: it reports both, keyed off the
+    # first daily period the feed returns, and a layout picks (see docs/sources.md).
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    assert r.today.day.isoformat() == "2026-07-01"
+    assert r.today.high.real == 34
+    assert r.today.low.real == 24
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+    assert r.tomorrow.high.real == 38
+    assert r.tomorrow.low.real == 26
+
+
+def test_rollover_hour_is_rejected_as_unknown_config() -> None:
+    # The knob is gone, and NwsConfig stays extra="forbid", so a stale config fails fast.
+    with pytest.raises(ValidationError):
+        NwsConfig(latitude=LAT, longitude=LON, user_agent="x", rollover_hour=20)
 
 
 def test_http_error_raises_weather_error() -> None:

@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from kindle_dash_gen import pipeline
 from kindle_dash_gen.cli import app
 from kindle_dash_gen.sources.builtins.mta.model import Direction, StationBoard, TrainArrival
-from kindle_dash_gen.sources.builtins.nws.model import NwsData, Temperature
+from kindle_dash_gen.sources.builtins.nws.model import DailyHighLow, NwsData, Temperature
 
 runner = CliRunner()
 
@@ -292,9 +292,12 @@ def _weather_report() -> NwsData:
         precip_probability=10,
         raining=False,
         observed_conditions="Clear",
-        high=Temperature(31.0, None),
-        low=Temperature(20.0, None),
-        high_low_date=date(2026, 7, 1),
+        today=DailyHighLow(
+            day=date(2026, 7, 1), high=Temperature(31.0, None), low=Temperature(20.0, None)
+        ),
+        tomorrow=DailyHighLow(
+            day=date(2026, 7, 2), high=Temperature(29.0, None), low=Temperature(19.0, None)
+        ),
         forecast="Sunny all day",
         forecast_name="Today",
         hourly=[],

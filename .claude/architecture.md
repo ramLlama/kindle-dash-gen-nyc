@@ -91,11 +91,19 @@ The `nws` source (`NwsSource` + `NwsConfig`, in `source.py`) wraps `NwsClient` a
      dropping the valid siblings (per-item `try/except`). Only `event` is required per alert;
      other CAP fields default to `"Unknown"`/`""`/`None`.
 
-**High/Low rollover:** `_high_low` picks today's daytime high and overnight low, but after
-`rollover_hour` (default 20:00 local) it targets the next day. It selects the first daytime/
-nighttime periods on or after the target date, since the current day's daytime period may have
-already dropped out of the feed by evening. Apparent high/low are the max/min feels-like across
-each period's window.
+**High/Low:** module-level `_day_high_low(daily_periods, day, apparent)` pairs a day's daytime
+(high) and nighttime (low) periods and returns a `DailyHighLow`; `fetch` calls it twice to fill
+`today` and `tomorrow`. Apparent high/low are the max/min feels-like across each period's window.
+Two deliberate choices here:
+
+- It matches the day **exactly**, never falling forward to the next available period. NWS drops a
+  day's daytime period once it has passed, so from that evening today's high is genuinely unknown
+  and reports `None`. The old fall-forward returned *tomorrow's* high labelled with today's date.
+- "Today" is anchored on `as_of.date()` (the current hourly period's local date), **not** the first
+  daily period's date. The first daily period only looks like today's because NWS truncates an
+  in-progress period's `startTime` to roughly now. Anchoring on `as_of` is robust and matches how
+  open-meteo anchors (`daily.time[0]` under `timezone=auto`), so the two providers agree on "today"
+  for a layout that mixes them.
 
 All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
@@ -104,12 +112,12 @@ All parsing failures raise `WeatherError`. Values stay SI at full precision.
 The `open-meteo` source (`OpenMeteoSource` + `OpenMeteoConfig`, in `source.py`) wraps
 `OpenMeteoClient` and produces `OpenMeteoData` (in `model.py`); `OpenMeteoError` subclasses
 `SourceError`. Open-Meteo is keyless and global (no `user_agent`); `OpenMeteoConfig` is `latitude`,
-`longitude`, `rollover_hour` (default 20), `hourly_hours` (default 4). `OpenMeteoClient.fetch(lat,
+`longitude`, `hourly_hours` (default 4). `OpenMeteoClient.fetch(lat,
 lon)` opens a `niquests.AsyncSession` (`async with`) and hits **two independent endpoints
 concurrently** via `asyncio.gather(..., return_exceptions=True)`:
 
-1. `GET /v1/forecast` (`timezone=auto`, `wind_speed_unit=kmh`, `forecast_days=2` so the evening
-   high/low rollover has tomorrow's data) → current conditions, the hourly strip, and daily hi/lo.
+1. `GET /v1/forecast` (`timezone=auto`, `wind_speed_unit=kmh`, `forecast_days=2` so both days'
+   high/low are always available) → current conditions, the hourly strip, and daily hi/lo.
 2. `GET` the air-quality API → `us_aqi` + particulates (`pm2_5`, `pm10`, `aerosol_optical_depth`).
 
 `return_exceptions=True` lets both settle even when one fails (no orphaned request on a closing
@@ -117,7 +125,9 @@ session). A **forecast** failure is re-raised as `OpenMeteoError` and isolated b
 **air-quality** failure **degrades** — those fields become `None` while the rest of the report still
 lands (best-effort enrichment). Times come back naive-local (`timezone=auto`), consistent with the
 dashboard's `generated_at`. The current hour is excluded from the hourly strip (matching NWS) but its
-precip probability surfaces as "this hour"; high/low rollover mirrors the NWS logic. The produced
+precip probability surfaces as "this hour". A module-level `_day_high_low(daily, day)` fills the same
+`today`/`tomorrow` pair as NWS, with a `_reading()` helper that degrades a `null` provider value to
+`None` rather than building a `Temperature` whose `real` is `None`. The produced
 `weather_code` is the **raw WMO integer** (not a description) — the model owns a `wmo_description`
 helper for canonical text, but **icon selection is deliberately left to the layout**. All values stay
 SI at full precision.
@@ -231,8 +241,8 @@ changes the pixels.
 - `sources: dict[str, dict[str, Any]]` — the raw `[sources.<name>]` tables. `Config` does **not**
   validate their contents; after plugin discovery, `build_sources()` validates each slice against
   its plugin's own `Config` model (the `nws` plugin's `NwsConfig`: `latitude`, `longitude`,
-  `user_agent`, `rollover_hour`, `hourly_hours`; the keyless `open-meteo` plugin's `OpenMeteoConfig`:
-  `latitude`, `longitude`, `rollover_hour`, `hourly_hours` — no `user_agent`; the `mta` plugin's
+  `user_agent`, `hourly_hours`; the keyless `open-meteo` plugin's `OpenMeteoConfig`:
+  `latitude`, `longitude`, `hourly_hours` — no `user_agent`; the `mta` plugin's
   `MtaConfig`: `stations`, whose `Station`/`Platform` models also live in that plugin). An unknown
   source name or key fails fast
   there. Zero sources is valid. The old top-level `[location]`, `[weather]`, `[stations.*]` sections
@@ -249,6 +259,11 @@ changes the pixels.
 
 - **Presentation stays out of the domain models** — `DashboardData` and the source models
   carry no formatting; that lives in `format.py` and the layouts.
+- **Sources report; layouts decide** — a source reports every value the provider gives, neutrally,
+  and reports `None` when a value is genuinely unknown. Which of them to *show* is a layout's call.
+  This is why the weather sources return both `today` and `tomorrow` rather than a single
+  "current" high/low, why open-meteo keeps the raw WMO code instead of an icon name, and why mta
+  boards are uncapped. See the "Report data, not display decisions" section of `docs/sources.md`.
 - **One source of truth for formatting** — display formatting lives only in `format.py`
   (re-exported through `render/toolkit.py`) and is applied by the layouts. The `source run` debug
   command deliberately prints the *raw* produced data (SI, unformatted) via rich, so it shows

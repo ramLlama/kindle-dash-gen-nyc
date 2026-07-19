@@ -106,24 +106,49 @@ def test_upcoming_hours_excludes_current_hour() -> None:
     assert r.hourly[0].weather_code == 2  # raw WMO code carried through
 
 
-def test_high_low_today_before_rollover() -> None:
+def test_returns_both_days_high_low() -> None:
+    # The source makes no display decision about which day to show: it reports both, and a layout
+    # picks (see docs/sources.md). Apparent high/low come from the day's apparent max/min.
     with nm.mock(assert_all_called=False) as router:
         _route(router)
         r = asyncio.run(_client().fetch(LAT, LON))
-    assert r.high.real == 34
-    assert r.high.feels_like == 35  # apparent max
-    assert r.low.real == 24
-    assert r.low.feels_like == 25
-    assert r.high_low_date.isoformat() == "2026-07-01"
+    assert r.today.day.isoformat() == "2026-07-01"
+    assert (r.today.high.real, r.today.high.feels_like) == (34, 35)
+    assert (r.today.low.real, r.today.low.feels_like) == (24, 25)
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+    assert (r.tomorrow.high.real, r.tomorrow.high.feels_like) == (38, 39)
+    assert (r.tomorrow.low.real, r.tomorrow.low.feels_like) == (26, 27)
 
 
-def test_high_low_rolls_to_next_day_after_rollover() -> None:
+def test_both_days_are_independent_of_the_hour() -> None:
+    # Regression guard for the removed rollover: late in the day the same two days are reported,
+    # rather than today silently becoming tomorrow.
     with nm.mock(assert_all_called=False) as router:
-        _route(router, forecast=_forecast(time="2026-07-01T21:00"))  # past default rollover 20:00
+        _route(router, forecast=_forecast(time="2026-07-01T21:00"))
         r = asyncio.run(_client().fetch(LAT, LON))
-    assert r.high.real == 38
-    assert r.low.real == 26
-    assert r.high_low_date.isoformat() == "2026-07-02"
+    assert r.today.day.isoformat() == "2026-07-01"
+    assert r.today.high.real == 34
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+    assert r.tomorrow.high.real == 38
+
+
+def test_tomorrow_absent_from_a_short_forecast_window() -> None:
+    # A one-day forecast still yields a dated tomorrow, with no readings rather than a hole.
+    forecast = _forecast()
+    forecast["daily"] = {
+        "time": ["2026-07-01"],
+        "temperature_2m_max": [34],
+        "temperature_2m_min": [24],
+        "apparent_temperature_max": [35],
+        "apparent_temperature_min": [25],
+    }
+    with nm.mock(assert_all_called=False) as router:
+        _route(router, forecast=forecast)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    assert r.today.high.real == 34
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+    assert r.tomorrow.high is None
+    assert r.tomorrow.low is None
 
 
 def test_air_quality_fields() -> None:

@@ -106,6 +106,33 @@ A source class satisfies `kindle_dash_gen.sources.registry.Source`:
   default fetch. Sources resolve at invocation time, so a local `plugins_path` source's verbs work
   exactly like a bundled source's. (`list` is a reserved name — the group's own listing command.)
 
+## Report data, not display decisions
+
+A source's job is to report what the provider says, completely and neutrally. Choosing what to
+*show* belongs to the layout, which knows the panel size, the display timezone, and the design.
+
+Concretely, prefer reporting every value you have over picking one:
+
+```python
+# Good: report both days; a layout decides which to draw.
+today: DailyHighLow
+tomorrow: DailyHighLow
+
+# Avoid: a source deciding, via its own config knob, which day the dashboard should show.
+high: Temperature      # "today's, or tomorrow's after 20:00 local"
+```
+
+The bundled weather sources previously had exactly that knob (`rollover_hour`) and it was removed:
+the decision belonged to a layout, and no layout was asking for it. The same rule is why a source
+keeps raw values a layout can interpret — Open-Meteo carries the raw WMO `weather_code` rather than
+an icon name, and the `mta` source leaves its boards uncapped so the layout chooses how many
+arrivals fit.
+
+When a value is genuinely unknown, report `None` rather than substituting a nearby one. NWS drops a
+day's daytime period once it has passed, so from that evening today's high is unknown; reporting
+`None` is honest, where falling forward to the next available period would return *tomorrow's* high
+labelled with today's date.
+
 ## Secrets in config (`Secret`)
 
 A source that needs a credential (an API key, a token) should type that field as `Secret` rather

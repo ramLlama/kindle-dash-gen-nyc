@@ -16,7 +16,6 @@
 latitude = 40.7484
 longitude = -73.9857
 user_agent = "kindle-dash-gen (you@example.com)"   # NWS requires a User-Agent
-rollover_hour = 20     # after this local hour, high/low show the next day
 hourly_hours = 4       # number of upcoming hourly forecasts to include
 # Note: display units are NOT set here — they are a per-dashboard choice (weather_temp_units below).
 
@@ -27,7 +26,6 @@ hourly_hours = 4       # number of upcoming hourly forecasts to include
 # [sources.open-meteo]
 # latitude = 40.7484
 # longitude = -73.9857
-# rollover_hour = 20     # after this local hour, high/low show the next day
 # hourly_hours = 4       # number of upcoming hourly forecasts to include
 
 # The "mta" source: real-time subway arrivals. Stations are keyed by display name, under
