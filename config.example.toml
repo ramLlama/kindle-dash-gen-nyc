@@ -94,19 +94,29 @@ post_process_method = "resize"
 [dashboards.main.layout_config]
 # Header text at the top-left of the dashboard (a city or place name). Required — no default.
 title = "NYC"
+# IANA timezone every displayed time is shown in. Required: sources report aware UTC, so the
+# layout needs a zone to render local clock times (this is what lets one run serve dashboards
+# in different regions).
+timezone = "America/New_York"
 # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
 weather_temp_units = "both"
 # font: system font family (fontconfig). Omit to let the layout choose its own default (glanceable
 # uses "Adwaita Sans"). A set value overrides the layout's default for every glyph.
 font = "Adwaita Sans"
 
-# A second dashboard rendered from the same data to a different path (e.g. a second device, or a
-# landscape variant). Delete this block if you only need one output.
+# A second dashboard rendered from the same data to a different path (e.g. a second device, a
+# landscape variant, or another city). Delete this block if you only need one output. One fetch
+# feeds every dashboard, and each converts times to its own timezone — so a second city here needs
+# no second run.
 # [dashboards.landscape]
 # layout = "glanceable"
 # output_path = "./out/dashboard-landscape.png"
 # width = 1448
 # height = 1072
+#
+#   [dashboards.landscape.layout_config]   # required: title and timezone have no defaults
+#   title = "NYC"
+#   timezone = "America/New_York"
 
 [schedule]
 interval_minutes = 5

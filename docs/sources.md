@@ -106,6 +106,35 @@ A source class satisfies `kindle_dash_gen.sources.registry.Source`:
   default fetch. Sources resolve at invocation time, so a local `plugins_path` source's verbs work
   exactly like a bundled source's. (`list` is a reserved name — the group's own listing command.)
 
+## Datetimes are aware UTC
+
+Every datetime crossing this boundary is **timezone-aware, in UTC**. The `now` your `fetch` receives
+is aware UTC, and the datetimes in the data you return should be too:
+
+```python
+from datetime import UTC, datetime
+
+arrival = datetime.fromisoformat(raw).astimezone(UTC)   # whatever the provider gave you
+```
+
+Nothing enforces this — it is a convention, so honoring it is on you. What it buys: values from
+different sources stay directly comparable, and a single run can serve dashboards in different
+regions, because a layout converts to its own display timezone (see its required `timezone` config
+in [plugins.md](plugins.md)). Local wall-clock time is not lost by storing UTC; it is recovered at
+display time.
+
+Two traps worth knowing:
+
+- **Deriving a calendar date.** Take the date in the *location's* zone before converting to UTC.
+  Past ~20:00 local the UTC date is already tomorrow, so `as_of.astimezone(UTC).date()` silently
+  reports the wrong day every evening.
+- **Matching hourly buckets.** Compare in local time when a provider's timestamps sit on local hour
+  boundaries. Truncating a UTC instant to the hour misaligns in zones offset by a half or quarter
+  hour (India +05:30, Nepal +05:45, Chatham +12:45).
+
+A provider that reports naive local times should be converted with its *named* zone rather than a
+fixed offset, so hours on either side of a daylight-saving transition land on the right instant.
+
 ## Report data, not display decisions
 
 A source's job is to report what the provider says, completely and neutrally. Choosing what to

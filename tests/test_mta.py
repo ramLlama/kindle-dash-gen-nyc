@@ -1,14 +1,24 @@
 """Tests for the MTA subway source."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from kindle_dash_gen.sources.builtins.mta.model import Direction, MtaData, StationBoard
 from kindle_dash_gen.sources.builtins.mta.source import MtaClient, MtaError, Platform, Station
 
-NOW = datetime(2026, 7, 1, 12, 0, 0)
+NOW = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def _as_nyct_gtfs_would(instant: datetime) -> datetime:
+    """Render ``instant`` the way nyct-gtfs does: naive, in the *host's* local zone.
+
+    Its arrival property is a bare ``datetime.fromtimestamp(epoch)``, so mirroring that here keeps
+    the client's aware-UTC conversion under test rather than handing it an already-aware value.
+    Building the fixture from the host zone is also what keeps these assertions independent of it.
+    """
+    return instant.astimezone().replace(tzinfo=None)
 
 
 class FakeStop:
@@ -51,7 +61,8 @@ class FakeFeed:
 
 
 def _trip(route: str, direction: str, dest: str, stop_id: str, minutes: float) -> FakeTrip:
-    return FakeTrip(route, direction, dest, [FakeStop(stop_id, NOW + timedelta(minutes=minutes))])
+    arrival = _as_nyct_gtfs_would(NOW + timedelta(minutes=minutes))
+    return FakeTrip(route, direction, dest, [FakeStop(stop_id, arrival)])
 
 
 def _platform(**kw) -> Platform:
@@ -190,3 +201,24 @@ def test_mta_data_wraps_station_boards() -> None:
     board = StationBoard(name="Union Sq", arrivals_by_direction={})
     boards = MtaData(boards=[board])
     assert boards.boards == [board]
+
+
+def test_arrivals_are_aware_utc_regardless_of_host_timezone(host_timezone) -> None:
+    """nyct-gtfs hands back naive host-local times; the client must recover the true instant.
+
+    The same feed rendered on a Los Angeles box and a Kolkata box has to yield identical arrival
+    instants, otherwise a dashboard's clock would depend on where the generator happens to run.
+    """
+    instant = datetime(2026, 7, 1, 12, 5, 0, tzinfo=UTC)
+
+    def arrivals_under(tz: str) -> list[datetime]:
+        # Rebuild the fixture under this zone, exactly as nyct-gtfs would render it there.
+        host_timezone(tz)
+        trip = FakeTrip("N", "N", "Astoria", [FakeStop("R20N", _as_nyct_gtfs_would(instant))])
+        loader, _ = _loader_for([trip])
+        boards = _fetch({"Union Sq": _station()}, loader)
+        return [a.arrival for a in boards[0].arrivals_by_direction[Direction.NORTH]]
+
+    west, east = arrivals_under("America/Los_Angeles"), arrivals_under("Asia/Kolkata")
+    assert west == east == [instant]
+    assert all(a.tzinfo is not None and a.utcoffset().total_seconds() == 0 for a in west)

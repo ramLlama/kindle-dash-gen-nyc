@@ -8,7 +8,8 @@ it depends on the system font and is an iterating visual concern.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from unittest import mock
 
 import pytest
 from PIL import Image, ImageDraw
@@ -33,7 +34,7 @@ from kindle_dash_gen.sources.builtins.nws.model import (
 )
 from kindle_dash_gen.sources.builtins.open_meteo import model as om
 
-NOW = datetime(2026, 7, 2, 20, 30, 0)
+NOW = datetime(2026, 7, 3, 0, 30, 0, tzinfo=UTC)  # 2026-07-02 20:30 EDT
 W, H = 1072, 1448
 
 _MISSING = object()  # distinguishes "use default" from an explicit None/[]
@@ -146,7 +147,12 @@ def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     return DashboardData(generated_at=NOW, source_data=source_data)
 
 
-_CONFIG = {"title": "NYC", "font": "Adwaita Sans", "weather_temp_units": "both"}
+_CONFIG = {
+    "title": "NYC",
+    "timezone": "America/New_York",
+    "font": "Adwaita Sans",
+    "weather_temp_units": "both",
+}
 
 
 def _render(data: DashboardData) -> Image.Image:
@@ -377,7 +383,11 @@ def test_font_none_falls_back_to_default() -> None:
     # An unspecified font (None) resolves to the layout's default (glanceable's DEFAULT_FONT), so
     # the render still succeeds at full size rather than failing to resolve a font.
     img = render(
-        _dashboard(), width=W, height=H, layout="glanceable", layout_config={"title": "NYC"}
+        _dashboard(),
+        width=W,
+        height=H,
+        layout="glanceable",
+        layout_config={"title": "NYC", "timezone": "America/New_York"},
     )
     assert img.size == (W, H)
 
@@ -412,7 +422,7 @@ def test_unknown_layout_config_key_is_rejected() -> None:
             width=W,
             height=H,
             layout="glanceable",
-            layout_config={"title": "NYC", "bogus": 1},
+            layout_config={"title": "NYC", "timezone": "America/New_York", "bogus": 1},
         )
 
 
@@ -425,7 +435,11 @@ def test_unresolvable_font_raises() -> None:
             width=W,
             height=H,
             layout="glanceable",
-            layout_config={"title": "NYC", "font": "No Such Font Family 9000"},
+            layout_config={
+                "title": "NYC",
+                "timezone": "America/New_York",
+                "font": "No Such Font Family 9000",
+            },
         )
 
 
@@ -434,3 +448,74 @@ def test_resolve_face_differentiates_weights() -> None:
     # so headings actually render heavier than body text.
     faces = {_resolve_face("Adwaita Sans", w) for w in ("Regular", "Bold", "Black")}
     assert len(faces) == 3
+
+
+# ── Display timezone ───────────────────────────────────────────────────────────────────────────
+# Sources hand over aware UTC; the layout converts every drawn time to its configured zone. These
+# pin that the conversion actually happens, and that it is the config — not the host's TZ — that
+# decides what the panel says.
+
+
+def _rendered_text(data: DashboardData, config: dict) -> list[str]:
+    """Every string the layout draws, captured by spying on ImageDraw.text."""
+    drawn: list[str] = []
+    original = ImageDraw.ImageDraw.text
+
+    def spy(self, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    with mock.patch.object(ImageDraw.ImageDraw, "text", spy):
+        render(data, width=W, height=H, layout="glanceable", layout_config=config)
+    return drawn
+
+
+def test_header_clock_is_drawn_in_the_configured_timezone() -> None:
+    # NOW is 2026-07-03 00:30 UTC, i.e. 20:30 on Jul 2 in New York and 17:30 in Los Angeles.
+    eastern = _rendered_text(_dashboard(), {**_CONFIG, "timezone": "America/New_York"})
+    pacific = _rendered_text(_dashboard(), {**_CONFIG, "timezone": "America/Los_Angeles"})
+    assert "Thu Jul 2, 8:30 PM" in eastern
+    assert "Thu Jul 2, 5:30 PM" in pacific
+
+
+def test_arrival_clock_is_drawn_in_the_configured_timezone() -> None:
+    # A single aware-UTC arrival renders as a different wall clock per dashboard timezone.
+    arrival = datetime(2026, 7, 3, 0, 35, 0, tzinfo=UTC)
+    board = StationBoard(
+        name="Union Sq",
+        arrivals_by_direction={
+            Direction.NORTH: [
+                TrainArrival(
+                    route="N", direction=Direction.NORTH, destination="Astoria", arrival=arrival
+                )
+            ]
+        },
+    )
+    data = _dashboard(boards=[board])
+    assert "8:35 pm" in _rendered_text(data, {**_CONFIG, "timezone": "America/New_York"})
+    assert "5:35 pm" in _rendered_text(data, {**_CONFIG, "timezone": "America/Los_Angeles"})
+
+
+def test_render_is_independent_of_the_host_timezone(host_timezone) -> None:
+    # The whole point of aware UTC + a configured display zone: the panel must not change because
+    # the machine generating it sits in a different zone.
+    def render_under(tz: str) -> bytes:
+        host_timezone(tz)
+        return _render(_dashboard()).tobytes()
+
+    assert render_under("America/Los_Angeles") == render_under("Asia/Kolkata")
+
+
+def test_timezone_is_required_and_validated() -> None:
+    # No default: without a zone the layout would print UTC clock times.
+    with pytest.raises(ValidationError):
+        render(_dashboard(), width=W, height=H, layout="glanceable", layout_config={"title": "NYC"})
+    # A bad zone fails at config validation, not at the first render.
+    with pytest.raises(ValidationError):
+        render(
+            _dashboard(),
+            width=W,
+            height=H,
+            layout="glanceable",
+            layout_config={"title": "NYC", "timezone": "Mars/Olympus_Mons"},
+        )

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,9 @@ async def gather(cfg: Config) -> DashboardData:
     """
     # Discover local (plugins_path) sources too, not just the bundled ones build_sources loads.
     plugins.load_plugins(cfg.plugins_path)
-    now = datetime.now()
+    # Aware UTC: every datetime in the app is aware UTC (see the Source protocol), so a dashboard
+    # can mix sources in different regions and a layout converts to its own display timezone.
+    now = datetime.now(UTC)
     resolved = build_sources(cfg.sources)
     names = list(resolved)
     results = await asyncio.gather(

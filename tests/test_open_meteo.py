@@ -1,6 +1,8 @@
 """Tests for the Open-Meteo weather + air-quality source."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import niquests_mock as nm
 import pytest
@@ -15,11 +17,15 @@ from kindle_dash_gen.sources.builtins.open_meteo.source import (
 )
 
 LAT, LON = 40.7484, -73.9857
+LOCAL = timezone(timedelta(hours=-4))  # the fixture's utc_offset_seconds, for readable asserts
 
 
 def _forecast(time: str = "2026-07-01T14:00", code: int = 61) -> dict:
     """A forecast response; ``time`` is the current hour, ``code`` the current WMO weather code."""
     return {
+        # timezone=auto: naive local timestamps plus the zone that makes them aware UTC.
+        "timezone": "America/New_York",  # matches the NYC coordinates below
+        "utc_offset_seconds": -14400,  # reported by the API; unused (the named zone wins)
         "current": {
             "time": time,
             "temperature_2m": 31,
@@ -91,7 +97,8 @@ def test_fetch_parses_core_fields() -> None:
     assert r.wind_direction == "SW"  # 225° → SW
     assert r.precip_probability == 20  # this hour (14:00)
     assert r.raining is True  # precipitation 0.5 > 0
-    assert r.as_of.hour == 14
+    assert r.as_of == datetime(2026, 7, 1, 18, 0, tzinfo=UTC)  # 14:00 EDT, stored as UTC
+    assert r.as_of.astimezone(LOCAL).hour == 14
 
 
 def test_upcoming_hours_excludes_current_hour() -> None:
@@ -99,7 +106,9 @@ def test_upcoming_hours_excludes_current_hour() -> None:
         _route(router)
         r = asyncio.run(_client().fetch(LAT, LON))
     # hourly_hours defaults to 4; the current hour (14:00) is excluded.
-    assert [h.time.hour for h in r.hourly] == [15, 16, 17, 18]
+    # Stored UTC; the strip's local hours round-trip back to 15:00-18:00.
+    assert [h.time.astimezone(LOCAL).hour for h in r.hourly] == [15, 16, 17, 18]
+    assert [h.time.hour for h in r.hourly] == [19, 20, 21, 22]  # the same instants in UTC
     assert [h.temperature.real for h in r.hourly] == [32, 33, 32, 30]
     assert [h.temperature.feels_like for h in r.hourly] == [34, 35, 33, 31]
     assert [h.precip_probability for h in r.hourly] == [30, 40, 50, 60]
@@ -222,3 +231,62 @@ def test_cardinal(degrees: float | None, expected: str) -> None:
 )
 def test_wmo_description(code: int, expected: str) -> None:
     assert wmo_description(code) == expected
+
+
+def test_hours_align_in_a_half_hour_offset_zone() -> None:
+    """Hours are matched in local time, so a zone offset by :30 still lines up.
+
+    Truncating the *UTC* instant to the hour instead would land between local hour boundaries in
+    India (+05:30), Nepal (+05:45), and Chatham (+12:45), silently dropping "this hour" and
+    shifting the strip.
+    """
+    forecast = _forecast(time="2026-07-01T14:00")
+    forecast["timezone"] = "Asia/Kolkata"
+    forecast["utc_offset_seconds"] = 19800
+    with nm.mock(assert_all_called=False) as router:
+        _route(router, forecast=forecast)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    kolkata = ZoneInfo("Asia/Kolkata")
+    assert r.as_of == datetime(2026, 7, 1, 8, 30, tzinfo=UTC)  # 14:00 IST
+    assert r.precip_probability == 20  # "this hour" still matched despite the :30 offset
+    assert [h.time.astimezone(kolkata).hour for h in r.hourly] == [15, 16, 17, 18]
+    assert [h.time.minute for h in r.hourly] == [30, 30, 30, 30]  # :30 past, in UTC
+
+
+def test_hours_across_a_dst_transition_use_the_right_offset() -> None:
+    """Each hour resolves its own offset, rather than reusing the one from request time.
+
+    US DST ends 2026-11-01 at 02:00 local. Tagging every timestamp with the request-time offset
+    (EDT) would put the post-transition hours an hour early, pairing each with the wrong readings.
+    """
+    forecast = _forecast(time="2026-11-01T00:00")
+    forecast["timezone"] = "America/New_York"
+    forecast["utc_offset_seconds"] = -14400  # EDT at request time; EST applies after 02:00
+    forecast["hourly"]["time"] = [
+        "2026-11-01T00:00",
+        "2026-11-01T01:00",
+        "2026-11-01T02:00",
+        "2026-11-01T03:00",
+        "2026-11-01T04:00",
+        "2026-11-01T05:00",
+    ]
+    forecast["daily"]["time"] = ["2026-11-01", "2026-11-02"]
+    with nm.mock(assert_all_called=False) as router:
+        _route(router, forecast=forecast)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    # 01:00 EDT is 05:00Z; 02:00 EST is 07:00Z (not 06:00Z, which a fixed -04:00 would give).
+    assert [h.time for h in r.hourly] == [
+        datetime(2026, 11, 1, 5, 0, tzinfo=UTC),
+        datetime(2026, 11, 1, 7, 0, tzinfo=UTC),
+        datetime(2026, 11, 1, 8, 0, tzinfo=UTC),
+        datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+    ]
+
+
+def test_unknown_timezone_raises_open_meteo_error() -> None:
+    forecast = _forecast()
+    forecast["timezone"] = "Mars/Olympus_Mons"
+    with nm.mock(assert_all_called=False) as router:
+        _route(router, forecast=forecast)
+        with pytest.raises(OpenMeteoError):
+            asyncio.run(_client().fetch(LAT, LON))

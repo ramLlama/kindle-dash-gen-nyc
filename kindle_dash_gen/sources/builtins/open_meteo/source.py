@@ -5,15 +5,17 @@ concurrently: ``/v1/forecast`` (current conditions, hourly, daily hi/lo) and the
 (US AQI + particulates). All data is kept in SI units at full precision; callers round for display.
 The produced data type lives in :mod:`.model`.
 
-Times come back in the location's local zone (``timezone=auto``) as naive ISO timestamps, so the
-datetimes here are naive local — consistent within this source and with the dashboard's
-``generated_at``.
+Times come back in the location's local zone (``timezone=auto``) as naive ISO timestamps. The
+response's named ``timezone`` is what makes them aware UTC, which is what every source returns
+(see the ``Source`` protocol); a layout converts back to a display zone. Hour matching still
+happens in local time, since the feed's timestamps sit on *local* hour boundaries.
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import niquests
 from pydantic import BaseModel, ConfigDict
@@ -84,6 +86,12 @@ class OpenMeteoClient:
             "hourly": "temperature_2m,apparent_temperature,precipitation_probability,weather_code",
             "daily": "temperature_2m_max,temperature_2m_min,"
             "apparent_temperature_max,apparent_temperature_min",
+            # Not "UTC", tempting as that is for skipping the conversion below: this parameter also
+            # sets the boundaries Open-Meteo aggregates `daily` over. Under UTC the day would run
+            # midnight-to-midnight *UTC*, so a San Francisco high/low would be taken across a
+            # 17:00-17:00 local window (measurably different: 18.1 vs 20.8 on a sample day), and
+            # `daily.time[0]` would flip to tomorrow's date every afternoon. Local days are the
+            # whole point of the field, so the timestamps get converted instead.
             "timezone": "auto",
             "wind_speed_unit": "kmh",
             "forecast_days": "2",  # today + tomorrow: both days' high/low are always reported
@@ -107,11 +115,23 @@ class OpenMeteoClient:
     def _build(self, forecast: dict, aqi: dict) -> OpenMeteoData:
         try:
             cur = forecast["current"]
-            as_of = datetime.fromisoformat(cur["time"])
-            hourly, this_hour_precip = self._hours(forecast["hourly"], as_of)
+            # ^ can you set the request timezeon to utc?
+            # Timestamps arrive naive in the location's own zone (timezone=auto). The response also
+            # names that zone, which is what turns them into the aware UTC every source returns.
+            # Local wall-clock time is *not* lost: a layout converts back for display.
+            #
+            # The named zone, not the response's `utc_offset_seconds`: that offset is the zone's
+            # offset *at request time*, and applying it to every hourly timestamp puts the hours
+            # after a DST transition on the wrong UTC instant (an evening fetch on changeover night
+            # would show an hour twice, with the wrong readings attached). ZoneInfo resolves the
+            # offset per timestamp.
+            local = ZoneInfo(forecast["timezone"])
+            as_of_local = datetime.fromisoformat(cur["time"])
+            as_of = as_of_local.replace(tzinfo=local).astimezone(UTC)
+            hourly, this_hour_precip = self._hours(forecast["hourly"], as_of_local, local)
             precip = _float(cur.get("precipitation"))
-            # "Today" is the first day the daily arrays cover (local to the coordinates, since the
-            # request uses timezone=auto).
+            # "Today" is the first day the daily arrays cover — already the location's local
+            # calendar day, so it is read as-is rather than derived from a UTC timestamp.
             today = date.fromisoformat(forecast["daily"]["time"][0])
             apparent = _float(cur.get("apparent_temperature"))
             temperature = Temperature(cur["temperature_2m"], apparent)
@@ -134,32 +154,40 @@ class OpenMeteoClient:
                 aerosol_optical_depth=_float(aqi.get("aerosol_optical_depth")),
             )
         except (KeyError, ValueError, IndexError, TypeError) as exc:
-            # TypeError covers a null where an object/array was expected (a common malformed-JSON
+            # KeyError also covers an unknown IANA zone name: ZoneInfoNotFoundError subclasses
+            # it. TypeError covers a null where an object/array was expected (a common malformed
             # shape); without it a bad payload would escape as a non-SourceError and, per the
             # pipeline's isolation, sink the whole render instead of just dropping this source.
             raise OpenMeteoError("unexpected Open-Meteo forecast response") from exc
 
-    def _hours(self, hourly: dict, as_of: datetime) -> tuple[list[HourlyForecast], int | None]:
+    def _hours(
+        self, hourly: dict, as_of_local: datetime, local: ZoneInfo
+    ) -> tuple[list[HourlyForecast], int | None]:
         """The next ``hourly_hours`` after the current hour, plus the current hour's precip chance.
 
         Open-Meteo returns whole-day hourly arrays; the current hour is excluded from the strip
         (matching the NWS source) but its precip probability surfaces as the report's "this hour".
+
+        Hours are matched in the location's *local* time, then stored as aware UTC. Truncating the
+        UTC instant to the hour instead would misalign wherever the zone's offset is not a whole
+        number of hours (India +05:30, Nepal +05:45, Chatham +12:45), since the feed's timestamps
+        sit on local hour boundaries.
         """
-        times = [datetime.fromisoformat(t) for t in hourly["time"]]
         temps = hourly["temperature_2m"]
         apparent = hourly["apparent_temperature"]
         precip = hourly["precipitation_probability"]
         codes = hourly["weather_code"]
-        this_hour = as_of.replace(minute=0, second=0, microsecond=0)
+        this_hour = as_of_local.replace(minute=0, second=0, microsecond=0)
         upcoming: list[HourlyForecast] = []
         this_hour_precip: int | None = None
-        for i, t in enumerate(times):
+        for i, raw in enumerate(hourly["time"]):
+            t = datetime.fromisoformat(raw)  # naive, local to the coordinates
             if t == this_hour:
                 this_hour_precip = _int(precip[i])
             if t > this_hour and len(upcoming) < self._hourly_hours:
                 upcoming.append(
                     HourlyForecast(
-                        time=t,
+                        time=t.replace(tzinfo=local).astimezone(UTC),
                         temperature=Temperature(temps[i], _float(apparent[i])),
                         weather_code=int(codes[i]),
                         precip_probability=_int(precip[i]),

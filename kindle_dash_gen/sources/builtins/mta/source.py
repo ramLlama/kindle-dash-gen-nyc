@@ -13,7 +13,7 @@ import asyncio
 import csv
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib.resources import files
 from typing import Literal
 
@@ -95,7 +95,7 @@ class MtaClient:
 
     async def fetch(self, now: datetime | None = None) -> list[StationBoard]:
         """Load every needed feed once and build a board for each station name."""
-        now = now or datetime.now()
+        now = now or datetime.now(UTC)
         feeds = await self._load_feeds()
         return [self._board(name, station, feeds, now) for name, station in self._stations.items()]
 
@@ -172,14 +172,23 @@ def _target_stop_ids(platform: Platform) -> list[str]:
 
 
 def _arrival_at(trip: Trip, target_ids: list[str]) -> datetime | None:
-    """The predicted arrival at the first matching target stop in the trip's path.
+    """The predicted arrival at the first matching target stop in the trip's path, as aware UTC.
 
     ``target_ids`` are the N/S variants of a single platform's stop, so a given trip (which
     runs one direction) matches at most one.
+
+    nyct-gtfs builds its arrival with a bare ``datetime.fromtimestamp(epoch)``, i.e. the *host's*
+    local wall clock with no tzinfo. Feeding that straight to ``astimezone`` recovers the original
+    instant exactly, whatever the host zone happens to be: ``astimezone`` reads a naive value as
+    host-local, which is precisely the zone ``fromtimestamp`` rendered it in, so the two cancel.
+    (It stays exact across a DST fall-back too, since ``fromtimestamp`` sets ``fold`` on the
+    ambiguous hour and ``astimezone`` honors it.) That keeps the app free of nyct-gtfs internals
+    while still not depending on the host being set to America/New_York.
     """
     for stop in trip.stop_time_updates:
         if stop.stop_id in target_ids:
-            return stop.arrival
+            arrival = stop.arrival
+            return None if arrival is None else arrival.astimezone(UTC)
     return None
 
 

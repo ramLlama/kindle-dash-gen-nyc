@@ -36,7 +36,11 @@ _ICON_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def format_eta(arrival: datetime, now: datetime) -> str:
-    """Format an arrival time as whole minutes from now, e.g. "3 min" (never negative)."""
+    """Format an arrival time as whole minutes from now, e.g. "3 min" (never negative).
+
+    Both arguments must be timezone-aware (everything in the app is aware UTC — see
+    ``docs/sources.md``); subtracting an aware and a naive datetime raises ``TypeError``.
+    """
     minutes = max(0, round((arrival - now).total_seconds() / 60))
     return f"{minutes} min"
 

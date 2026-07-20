@@ -21,7 +21,7 @@ class TrainArrival:
     route: str  # line/route id, e.g. "L", "6"
     direction: Direction
     destination: str  # headsign, e.g. "8 Av"
-    arrival: datetime  # predicted arrival time (naive local)
+    arrival: datetime  # predicted arrival time (aware UTC; a layout converts for display)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -33,7 +33,9 @@ run() loop  ──every interval_minutes──▶  run_once(cfg)
 `DashboardData` at the panel size, returning a raw Pillow `Image`. `post_process()` then grayscales,
 fits, and quantizes it into Kindle-ready PNG bytes.
 
-- **`gather()`** (async) iterates the discovered source plugins (`build_sources(cfg.sources)`
+- **`gather()`** (async) stamps `now = datetime.now(UTC)` (aware — it becomes
+  `DashboardData.generated_at` and is the `now` handed to every source), then iterates the
+  discovered source plugins (`build_sources(cfg.sources)`
   resolves each `[sources.<name>]` to its plugin class + validated config), constructs and `fetch`es
   every source **concurrently** via `asyncio.gather(..., return_exceptions=True)`, then reduces the
   results **deterministically in `build_sources` order** (not completion order). A source that raises
@@ -68,6 +70,26 @@ produced type, and a layout reconciles multiple providers in its own adapter.
 subclasses. `gather()` (above) drives them. See `docs/sources.md` for the contract. Below is what
 each bundled source does internally.
 
+### Datetimes: aware UTC across every boundary
+
+The `now` a source receives is aware UTC and every timestamp it returns must be aware UTC, so
+values from providers in different regions are directly comparable and a single `gather()` can feed
+dashboards in different zones. The `Source` protocol docstring in `sources/registry.py` states the
+convention, but the registry does **not** enforce it (no runtime check, no coercion) —
+`docs/sources.md` ("Datetimes are aware UTC") is the enforcement mechanism. Display conversion is a
+layout's job, not a source's.
+
+Two things must still be computed in **local** time before the conversion, and both bundled weather
+sources do so deliberately:
+
+- **Calendar dates.** `today` is derived from the local `as_of` (`as_of_local.date()`) *before*
+  `.astimezone(UTC)`. Past roughly 20:00 local the UTC date is already tomorrow, so anchoring on
+  the UTC value would skew high/low by a day every evening.
+- **Hourly bucket matching.** Provider hourly timestamps sit on *local* hour boundaries, so the
+  current hour is matched locally and only then stored as UTC. Truncating a UTC instant to the hour
+  misaligns in every zone whose offset is not a whole number of hours (India +05:30, Nepal +05:45,
+  Chatham +12:45).
+
 ### NWS weather (sources/builtins/nws/)
 
 The `nws` source (`NwsSource` + `NwsConfig`, in `source.py`) wraps `NwsClient` and produces
@@ -99,11 +121,18 @@ Two deliberate choices here:
 - It matches the day **exactly**, never falling forward to the next available period. NWS drops a
   day's daytime period once it has passed, so from that evening today's high is genuinely unknown
   and reports `None`. The old fall-forward returned *tomorrow's* high labelled with today's date.
-- "Today" is anchored on `as_of.date()` (the current hourly period's local date), **not** the first
+- "Today" is anchored on the *local* `as_of` date (read off `as_of_local` before the value is
+  normalized to UTC — see the datetimes section above), **not** the first
   daily period's date. The first daily period only looks like today's because NWS truncates an
   in-progress period's `startTime` to roughly now. Anchoring on `as_of` is robust and matches how
   open-meteo anchors (`daily.time[0]` under `timezone=auto`), so the two providers agree on "today"
   for a layout that mixes them.
+
+Every stored timestamp (`as_of`, each `hourly[].time`, and the alert
+`effective`/`onset`/`expires`/`ends`) is normalized with `.astimezone(UTC)` — NWS supplies offsets,
+so parsing is lossless. `_parse_alert_time` swallows the module-level `_ALERT_TIME_SWALLOW`
+`(ValueError, TypeError)` tuple rather than a bare inline `except (…)`, matching how the module
+names its other external-vocab literals.
 
 All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
@@ -123,8 +152,22 @@ concurrently** via `asyncio.gather(..., return_exceptions=True)`:
 `return_exceptions=True` lets both settle even when one fails (no orphaned request on a closing
 session). A **forecast** failure is re-raised as `OpenMeteoError` and isolated by the pipeline; an
 **air-quality** failure **degrades** — those fields become `None` while the rest of the report still
-lands (best-effort enrichment). Times come back naive-local (`timezone=auto`), consistent with the
-dashboard's `generated_at`. The current hour is excluded from the hourly strip (matching NWS) but its
+lands (best-effort enrichment).
+
+Times come back **naive-local** (`timezone=auto`) and are made aware UTC via
+`ZoneInfo(forecast["timezone"])` — the response's **named** zone, deliberately *not* its
+`utc_offset_seconds`, since that offset is the zone's offset at request time and applying it
+uniformly puts hours past a DST transition on the wrong instant. Two traps here, both recorded in
+code comments and worth keeping:
+
+- **`timezone=auto` must not become `timezone=UTC`**, tempting as that is for skipping the
+  conversion. The parameter also sets the boundaries Open-Meteo aggregates `daily` over: under UTC
+  a San Francisco high/low would be taken across a 17:00–17:00 local window (18.1 vs 20.8 on a
+  sample day) and `daily.time[0]` would flip to tomorrow every afternoon.
+- **`_hours` matches the current hour in local time** before converting, because the feed's
+  timestamps sit on local hour boundaries (see the datetimes section above).
+
+The current hour is excluded from the hourly strip (matching NWS) but its
 precip probability surfaces as "this hour". A module-level `_day_high_low(daily, day)` fills the same
 `today`/`tomorrow` pair as NWS, with a `_reading()` helper that degrades a `null` provider value to
 `None` rather than building a `Temperature` whose `real` is `None`. The produced
@@ -151,6 +194,15 @@ in `model.py`); `MtaError` subclasses `SourceError`. `MtaClient(stations).fetch(
   time (N-then-S order). No truncation here — boards carry every upcoming arrival; the layout
   decides how many to show (see the Render section).
 - Feed load / parse failures raise `MtaError`. An unknown line id also raises `MtaError`.
+
+**Arrival times (`_arrival_at`) round-trip through the host zone on purpose.** `nyct_gtfs` builds
+its arrival with `datetime.fromtimestamp(epoch)`, i.e. a naive value in the *host's* local wall
+clock. The source does nothing but `stop.arrival.astimezone(UTC)`, which recovers the exact
+original instant on any host: `astimezone` interprets a naive value as host-local, the same zone
+`fromtimestamp` rendered it in, so the two cancel. It is exact across DST fall-back as well, since
+`fromtimestamp` sets `fold` on the ambiguous hour and `astimezone` honors it. This is deliberately
+why **no nyct_gtfs internals are touched** — `TrainArrival.arrival` is aware UTC and a layout
+converts it for display. `tests/test_mta.py` asserts this by actually moving the process zone.
 
 `feed_loader` is an injectable async seam for tests (`Callable[[str], Awaitable[NYCTFeed]]`); the
 default builds `NYCTFeed(url, fetch_immediately=False)` then `await feed.refresh_async()`.
@@ -179,7 +231,17 @@ import time, and discovery imports them. A layout class implements the `Layout` 
 `build_layout(name, raw, *, width, height)` mirror `sources/registry.py`'s `build_sources`: they
 validate a `[dashboards.<name>.layout_config]` table against the layout's own `Config`
 (`extra="forbid"`), then construct it at the panel size. The bundled `glanceable`'s `GlanceableConfig`
-declares `font: str | None` and `weather_temp_units: Literal["us","si","both"]`.
+declares `font: str | None`, `weather_temp_units: Literal["us","si","both"]`, and a **required,
+default-less** `timezone: ZoneInfo`.
+
+**A layout owns display-time conversion.** Everything it is handed is aware UTC, so a bare
+`strftime` would print UTC. `glanceable` stores `self.tz = config.timezone` and applies
+`.astimezone(self.tz)` at all three formatting sites: the title clock, the hourly strip labels, and
+the subway board clock. `timezone` is typed `ZoneInfo` directly — pydantic 2.9+ parses the IANA
+name from TOML and rejects an unknown zone at config load, so there is no custom validator. It has
+no default on purpose: a default would silently render the wrong clock rather than fail. This is
+also the piece that makes one process able to render a New York and a Bay Area dashboard from the
+single shared `gather()`. `docs/plugins.md` states the contract for plugin authors.
 
 - **Toolkit (`render/toolkit.py`)** is the public surface a plugin builds on: `Fonts` (fontconfig
   `fc-match` resolution → file + face index, verified against the requested family so a missing
@@ -251,7 +313,10 @@ changes the pixels.
   pixel `width`/`height`, `gray_levels`, `post_process_method`, `rotate`, plus a raw
   `layout_config: dict[str, Any]`. `Config` does **not** validate `layout_config`; `validate_layout`
   checks it against the named layout's own `Config` after discovery. Render knobs (`font`,
-  `weather_temp_units`) live in `layout_config`, not on the dashboard.
+  `weather_temp_units`, `timezone`) live in `layout_config`, not on the dashboard. `timezone` is
+  **required** in every `glanceable` dashboard's `layout_config` — a breaking change for existing
+  configs, covered by README's "Upgrading an existing config" alongside the removal of
+  `rollover_hour`.
 - `plugins_path` — optional absolute dir of private layout and/or source plugins.
 - `Schedule.interval_minutes` (default 5).
 
@@ -264,6 +329,11 @@ changes the pixels.
   This is why the weather sources return both `today` and `tomorrow` rather than a single
   "current" high/low, why open-meteo keeps the raw WMO code instead of an icon name, and why mta
   boards are uncapped. See the "Report data, not display decisions" section of `docs/sources.md`.
+- **Aware UTC internally, local at display** — the same shape as "SI internally, round at display".
+  Sources normalize to aware UTC; only a layout converts to a display zone. The forcing case is
+  `nyct_gtfs` returning host-local wall clock: with naive datetimes, one process could not
+  correctly render a New York and a Bay Area dashboard, and `gather()` deliberately does one fetch
+  for all of them.
 - **One source of truth for formatting** — display formatting lives only in `format.py`
   (re-exported through `render/toolkit.py`) and is applied by the layouts. The `source run` debug
   command deliberately prints the *raw* produced data (SI, unformatted) via rich, so it shows

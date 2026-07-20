@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -196,7 +196,8 @@ def _print_source_fetch(ctx: typer.Context, name: str) -> None:
         )
     source_cls, source_cfg = build_sources({name: cfg.sources[name]})[name]
     try:
-        result = asyncio.run(source_cls(source_cfg).fetch(datetime.now()))
+        # Aware UTC, matching what the pipeline hands a source (see the Source protocol).
+        result = asyncio.run(source_cls(source_cfg).fetch(datetime.now(UTC)))
     except SourceError as exc:
         # A fetch failure is expected (source unavailable); report it cleanly, not as a traceback.
         raise typer.BadParameter(f"source {name!r} failed: {exc}") from exc

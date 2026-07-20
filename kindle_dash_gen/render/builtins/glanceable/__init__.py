@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, ConfigDict
@@ -218,6 +219,12 @@ class GlanceableConfig(BaseModel):
     font: str | None = None
     # Header text shown at the top-left of the dashboard (e.g. a city or place name). Required.
     title: str
+    # IANA zone every displayed time is converted to (e.g. "America/New_York"). Required, and has
+    # no default on purpose: sources hand over aware UTC, so without a zone this layout would print
+    # UTC clock times. It is what lets one process render a New York and a Bay Area dashboard from
+    # a single fetch. pydantic parses the TOML string into a ZoneInfo and rejects an unknown name
+    # at config load, so no hand-rolled validator is needed.
+    timezone: ZoneInfo
     # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
     weather_temp_units: Literal["us", "si", "both"] = "us"
 
@@ -237,6 +244,8 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.fonts = Fonts(config.font if config.font is not None else DEFAULT_FONT)
         self.units = config.weather_temp_units
         self.title = config.title
+        # Every datetime drawn is aware UTC; this is the zone they are shown in.
+        self.tz = config.timezone
         self.img = Image.new("L", (width, height), PAPER)
         self.d = ImageDraw.Draw(self.img)
 
@@ -266,7 +275,7 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.d.text((_MARGIN, y), self.title, font=title_font, fill=INK, anchor="la")
         # sit the time on the same baseline as the title (ascent below the cap line)
         baseline = y + title_font.getmetrics()[0]
-        label = when.strftime("%a %b %-d, %-I:%M %p")
+        label = when.astimezone(self.tz).strftime("%a %b %-d, %-I:%M %p")
         self.d.text(
             (self.w - _MARGIN, baseline),
             label,
@@ -348,7 +357,7 @@ class _Glanceable(Layout[GlanceableConfig]):
             cx = x0 + col_w / 2
             self.d.text(
                 (cx, y),
-                h.time.strftime("%-I%p").lower(),
+                h.time.astimezone(self.tz).strftime("%-I%p").lower(),
                 font=self.fonts.get(34, "Medium"),
                 fill=INK,
                 anchor="ma",
@@ -389,7 +398,8 @@ class _Glanceable(Layout[GlanceableConfig]):
             # departure clock time on the left, route letter (bold, no badge) on the right; both on
             # a shared baseline so the all-caps route lines up with the time's descenders
             baseline = y + pitch * 0.4 + 16
-            clock = f"{a.arrival.strftime('%-I:%M')} {a.arrival.strftime('%p').lower()}"
+            local = a.arrival.astimezone(self.tz)
+            clock = f"{local.strftime('%-I:%M')} {local.strftime('%p').lower()}"
             self.d.text(
                 (x + 6, baseline), clock, font=self.fonts.get(46, "Medium"), fill=INK, anchor="ls"
             )

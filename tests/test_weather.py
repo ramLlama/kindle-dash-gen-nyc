@@ -1,7 +1,7 @@
 """Tests for the NWS weather source."""
 
 import asyncio
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import niquests_mock as nm
 import pytest
@@ -17,6 +17,7 @@ from kindle_dash_gen.sources.builtins.nws.source import (
 )
 
 LAT, LON = 40.7484, -73.9857
+LOCAL = timezone(timedelta(hours=-4))  # the fixture's EDT offset, for readable asserts
 POINTS_URL = f"https://api.weather.gov/points/{LAT:.4f},{LON:.4f}"
 FORECAST_URL = "https://api.weather.gov/gridpoints/OKX/34,44/forecast"
 HOURLY_URL = "https://api.weather.gov/gridpoints/OKX/34,44/forecast/hourly"
@@ -187,7 +188,8 @@ def test_fetch_parses_core_fields() -> None:
     assert r.wind_direction == "SW"
     assert r.precip_probability == 20
     assert r.location_name == "New York, NY"
-    assert r.as_of.hour == 14
+    assert r.as_of == datetime(2026, 7, 1, 18, 0, tzinfo=UTC)  # 14:00 EDT, stored as UTC
+    assert r.as_of.astimezone(LOCAL).hour == 14
 
 
 def test_upcoming_hours_excludes_current_hour() -> None:
@@ -195,7 +197,9 @@ def test_upcoming_hours_excludes_current_hour() -> None:
         _route_all(router)
         r = asyncio.run(_client().fetch(LAT, LON))
     # hourly_hours defaults to 4; the current hour (14:00) is excluded.
-    assert [h.time.hour for h in r.hourly] == [15, 16, 17, 18]
+    # Stored UTC; the strip's local hours round-trip back to 15:00-18:00.
+    assert [h.time.astimezone(LOCAL).hour for h in r.hourly] == [15, 16, 17, 18]
+    assert [h.time.hour for h in r.hourly] == [19, 20, 21, 22]  # the same instants in UTC
     assert [h.temperature.real for h in r.hourly] == [32, 33, 32, 30]
     assert [h.temperature.feels_like for h in r.hourly] == [42.0, 41.0, 39.0, 37.0]
     assert r.hourly[0].precip_probability == 30
@@ -413,3 +417,35 @@ def test_sends_user_agent_header() -> None:
 )
 def test_is_raining(present: list, text: str, expected: bool) -> None:
     assert _is_raining(present, text) is expected
+
+
+def test_today_is_the_local_date_not_the_utc_date() -> None:
+    """Evening case: past ~20:00 local the UTC date is already tomorrow.
+
+    `today` must come from the location's local date, taken before the stored value is normalized
+    to UTC. Deriving it from the UTC value would shift the high/low forward a day every evening.
+    """
+    evening = {
+        "properties": {
+            "periods": [_hour("2026-07-01T21:00:00-04:00", 28, 10, "Clear")]  # 2026-07-02T01:00Z
+        }
+    }
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router)
+        router.get(HOURLY_URL, params={"units": "si"}).respond(json=evening)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    assert r.as_of == datetime(2026, 7, 2, 1, 0, tzinfo=UTC)  # stored UTC is already Jul 2
+    assert r.today.day.isoformat() == "2026-07-01"  # but "today" is still Jul 1 locally
+    assert r.tomorrow.day.isoformat() == "2026-07-02"
+
+
+def test_alert_timestamps_are_normalized_to_utc() -> None:
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router, alerts=ALERTS)
+        r = asyncio.run(_client().fetch(LAT, LON))
+    alert = r.alerts[0]
+    assert alert.effective == datetime(2026, 7, 1, 18, 0, tzinfo=UTC)  # 14:00 EDT
+    assert all(
+        t is None or t.utcoffset().total_seconds() == 0
+        for t in (alert.effective, alert.onset, alert.expires, alert.ends)
+    )

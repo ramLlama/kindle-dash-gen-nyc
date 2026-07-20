@@ -22,7 +22,9 @@ live in `pyproject.toml` (`[tool.ruff]`).
   `WeatherError`, `MtaError`. Other error types subclass `RuntimeError` directly (`LayoutError`,
   `SourceError` itself).
 - Module-level constants for external vocab / literals: `NWS_API`, `_LINE_TO_URL`,
-  `_RAIN_KEYWORDS`, `_DIRECTION_SUFFIXES`.
+  `_RAIN_KEYWORDS`, `_DIRECTION_SUFFIXES`. This extends to an exception tuple a module swallows
+  repeatedly: name it (`_ALERT_TIME_SWALLOW = (ValueError, TypeError)`) rather than writing a bare
+  inline `except (ValueError, TypeError):`.
 
 ## Types & Models
 
@@ -31,6 +33,11 @@ live in `pyproject.toml` (`[tool.ruff]`).
 - **Config models are pydantic** `BaseModel` with `model_config = ConfigDict(extra="forbid")`
   on every class. Provide sensible defaults inline; document non-obvious fields with a trailing
   `#` comment (see `config.py`).
+- **Datetimes are timezone-aware UTC.** Never construct a naive datetime: `datetime.now(UTC)`, not
+  `datetime.now()`. A source normalizes provider timestamps with `.astimezone(UTC)` (or
+  `.replace(tzinfo=<named zone>).astimezone(UTC)` when the provider sends naive local values), and
+  only a layout converts back with `.astimezone(self.tz)` for display. A display zone is typed
+  `ZoneInfo` on the config model so pydantic validates the IANA name at load time.
 - Prefer precise unions and `Literal[...]` for closed sets (`Literal["us", "si", "both"]`,
   `PostProcessMethod = Literal["resize", "crop", "pad"]`).
 
@@ -52,6 +59,12 @@ live in `pyproject.toml` (`[tool.ruff]`).
   note, the "anchor today on `as_of`, not the first daily period" rationale in `nws/source.py`, the
   atomic-write explanation.
 - Do not leave commented-out code or `TODO` placeholders.
+- **Verify a timezone assumption empirically, then comment the finding.** Reasoning about offsets,
+  DST folds, and what a provider's `timezone` parameter actually controls is unreliable — run it
+  under a moved `TZ` or against a real response and record the concrete numbers in the comment. The
+  Open-Meteo `timezone=auto` note (a real 18.1-vs-20.8 high under a UTC aggregation window) and the
+  nyct-gtfs host-local round-trip note are both written this way, and both are load-bearing: each
+  documents a change that *looks* like a simplification but is wrong.
 
 ## Python-specific conventions (from global user prefs, honored here)
 

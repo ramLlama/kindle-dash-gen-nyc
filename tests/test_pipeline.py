@@ -33,7 +33,7 @@ CONFIG: dict = {
             "output_path": "out/dashboard.png",
             "width": 100,
             "height": 140,
-            "layout_config": {"title": "Test"},
+            "layout_config": {"title": "Test", "timezone": "America/New_York"},
         }
     },
     "schedule": {"interval_minutes": 5},

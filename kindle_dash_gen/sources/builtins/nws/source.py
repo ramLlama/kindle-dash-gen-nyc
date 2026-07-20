@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import niquests
 from pydantic import BaseModel, ConfigDict
@@ -43,6 +43,8 @@ _OBSERVATION_SWALLOW = (WeatherError, KeyError, IndexError, TypeError)
 _ALERTS_SWALLOW = (WeatherError, KeyError, TypeError, ValueError)
 # A single malformed alert feature (e.g. missing ``event``) is skipped, not fatal to the list.
 _ALERT_ITEM_SWALLOW = (KeyError, TypeError)
+# An unparseable alert timestamp degrades to None rather than dropping the whole alert.
+_ALERT_TIME_SWALLOW = (ValueError, TypeError)
 
 
 class NwsClient:
@@ -109,16 +111,21 @@ class NwsClient:
                 raise WeatherError("NWS returned no forecast periods")
             now = hourly_periods[0]
             first_period = daily_periods[0]
-            as_of = datetime.fromisoformat(now["startTime"])
+            # NWS timestamps are aware already, at the location's own offset. Keep that local value
+            # to read the calendar date off, and store the UTC normalization: past ~20:00 local the
+            # UTC date is already tomorrow, so deriving `today` from the UTC value would skew the
+            # high/low by a day every evening.
+            as_of_local = datetime.fromisoformat(now["startTime"])
+            as_of = as_of_local.astimezone(UTC)
             # Anchor "today" on the current hour's local date, not on the first daily period's.
             # The first daily period is usually today's, but only because NWS truncates an
             # in-progress period's startTime to roughly now; if it ever emitted the untruncated
             # start, between midnight and ~06:00 the first period would be the *previous* evening's
-            # night period and this would silently be yesterday. `as_of` carries the location's UTC
-            # offset, so its date is unambiguously the local calendar day — and it matches how the
+            # night period and this would silently be yesterday. `as_of_local` carries the
+            # location's UTC offset, so its date is unambiguously the local day — and it matches how
             # open-meteo source anchors (`daily.time[0]` under `timezone=auto`), so the two
             # providers agree on "today" for a layout that mixes them.
-            today = as_of.date()
+            today = as_of_local.date()
             return NwsData(
                 temperature=Temperature(now["temperature"], _apparent_at(apparent, as_of)),
                 conditions=now["shortForecast"],
@@ -147,7 +154,7 @@ class NwsClient:
         """The next ``hourly_hours`` hours after the current one."""
         result = []
         for p in hourly_periods[1 : 1 + self._hourly_hours]:
-            time = datetime.fromisoformat(p["startTime"])
+            time = datetime.fromisoformat(p["startTime"]).astimezone(UTC)
             result.append(
                 HourlyForecast(
                     time=time,
@@ -261,8 +268,8 @@ def _parse_alert_time(value: str | None) -> datetime | None:
     if value is None:
         return None
     try:
-        return datetime.fromisoformat(value)
-    except ValueError, TypeError:
+        return datetime.fromisoformat(value).astimezone(UTC)
+    except _ALERT_TIME_SWALLOW:
         return None
 
 

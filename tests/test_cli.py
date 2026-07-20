@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -36,6 +36,7 @@ height = 140
 
 [dashboards.main.layout_config]
 title = "Test"
+timezone = "America/New_York"
 """
 
 
@@ -53,7 +54,7 @@ def _two_dashboard_text(first_path: Path, second_path: Path) -> str:
     second = (
         f'[dashboards.second]\noutput_path = "{second_path.as_posix()}"\n'
         "width = 100\nheight = 140\n"
-        '[dashboards.second.layout_config]\ntitle = "Test"\n'
+        '[dashboards.second.layout_config]\ntitle = "Test"\ntimezone = "America/New_York"\n'
     )
     return f"{main}\n{second}"
 
@@ -367,6 +368,37 @@ def test_source_name_fetches_mta_data(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["--config", cfg, "source", "mta"])
     assert result.exit_code == 0, result.output
     assert "Union Sq" in result.output  # board fetched through the mta source
+
+
+def test_source_name_drives_the_real_client_with_an_aware_now(tmp_path, monkeypatch) -> None:
+    """`source <name>` must hand the source an aware-UTC `now`, like the pipeline does.
+
+    Every other CLI source test substitutes the client, so the real one is never driven here. That
+    let a naive `datetime.now()` survive the aware-UTC migration and crash `source mta` with
+    "can't compare offset-naive and offset-aware datetimes" the moment it filtered past arrivals.
+    """
+    # nyct-gtfs renders arrivals naive in the host's zone; mirror that so the real conversion runs.
+    naive_local = (datetime.now(UTC) + timedelta(minutes=5)).astimezone().replace(tzinfo=None)
+
+    class _Stop:
+        stop_id = "L03N"
+        arrival = naive_local
+
+    class _Trip:
+        route_id, direction, headsign_text = "L", "N", "8 Av"
+        underway, stop_time_updates = True, [_Stop()]
+
+    class _Feed:
+        def filter_trips(self, **kw):
+            return [_Trip()]
+
+    async def _loader(url):
+        return _Feed()
+
+    monkeypatch.setattr("kindle_dash_gen.sources.builtins.mta.source._default_feed_loader", _loader)
+    result = runner.invoke(app, ["--config", str(_write(tmp_path, MTA_ONLY)), "source", "mta"])
+    assert result.exit_code == 0, result.output
+    assert "Union Sq" in result.output
 
 
 def test_source_mta_list_stations(tmp_path) -> None:

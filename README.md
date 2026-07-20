@@ -64,6 +64,17 @@ name) to help fill in `[sources.mta]`.
 See [`config.example.toml`](config.example.toml). Data sources and render layouts are both plugins;
 see [`docs/sources.md`](docs/sources.md) and [`docs/plugins.md`](docs/plugins.md).
 
+### Upgrading an existing config
+
+Config is strict (unknown keys are rejected), so these fail fast at startup with a clear message
+rather than misbehaving quietly:
+
+- **`timezone` is now required** in each dashboard's `layout_config`, e.g.
+  `timezone = "America/New_York"`. Sources report times in UTC and the layout converts them for
+  display, which is what lets one run render dashboards for different cities from a single fetch.
+- **`rollover_hour` was removed** from `[sources.nws]` and `[sources.open-meteo]`. Delete it. Those
+  sources now report both today's and tomorrow's high/low and leave the choice to a layout.
+
 ## Development
 
 ```sh

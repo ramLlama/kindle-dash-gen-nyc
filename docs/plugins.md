@@ -37,6 +37,8 @@ validates the dashboard's `[dashboards.<name>.layout_config]` table — the same
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict
 
+from zoneinfo import ZoneInfo
+
 from kindle_dash_gen.render.layout import Layout, register_layout
 from kindle_dash_gen.render.toolkit import DEFAULT_FONT, INK, PAPER, Fonts
 
@@ -45,6 +47,7 @@ class MyLayoutConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")  # reject unknown keys in [dashboards.x.layout_config]
 
     font: str | None = None
+    timezone: ZoneInfo          # pydantic parses the IANA name and rejects an unknown one
     weather_temp_units: str = "us"
 
 
@@ -77,6 +80,7 @@ height = 1448
 
 [dashboards.main.layout_config]   # validated by MyLayoutConfig
 font = "Futura"
+timezone = "America/New_York"
 weather_temp_units = "both"
 ```
 
@@ -95,6 +99,23 @@ A layout class satisfies `kindle_dash_gen.render.layout.Layout`:
   The pipeline post-processes it (grayscale, fit to `width`×`height`, quantize to the device gray
   levels) and writes it to the dashboard's `output_path`; drawing at the exact size makes the fit a
   no-op.
+
+### Datetimes reach you as aware UTC
+
+`generated_at` and every datetime inside `source_data` is timezone-aware **in UTC** (see
+[sources.md](sources.md#datetimes-are-aware-utc)). A bare `strftime` therefore prints *UTC* clock
+times, which is almost never what a dashboard should show. Take an IANA zone in your config and
+convert before formatting:
+
+```python
+self.tz = config.timezone                       # a ZoneInfo, validated at config load
+label = data.generated_at.astimezone(self.tz).strftime("%-I:%M %p")
+```
+
+Give the field no default: silently defaulting to UTC (or to the host's zone) produces a panel whose
+clock is wrong in a way nobody notices until they read it. This is also what lets one run render a
+New York and a Bay Area dashboard from a single fetch — each converts the same UTC instants to its
+own zone. The bundled `glanceable` does exactly this at its three time-formatting sites.
 
 `DashboardData` (`kindle_dash_gen.models`) carries `generated_at: datetime` and `source_data:
 dict[type, Any]`, which maps each source's produced data class to its instance. Look up what you

@@ -43,6 +43,11 @@ class Source(Protocol[ConfigT_co]):
     return is typed ``Any`` since the class varies per source; ``None`` is a valid value the
     pipeline treats as "absent"). A fetch *failure* raises a :class:`SourceError` (or subclass),
     which the pipeline isolates.
+
+    **Datetimes are aware UTC.** ``now`` is aware UTC, and a source should return aware UTC
+    datetimes in the data it produces. The registry does not enforce this, but honoring it is what
+    lets one process serve dashboards in different regions: values from different sources stay
+    directly comparable, and each layout converts to its own display timezone (``docs/sources.md``).
     """
 
     Config: ClassVar[type[BaseModel]]

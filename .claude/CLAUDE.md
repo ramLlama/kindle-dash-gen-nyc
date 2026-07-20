@@ -70,7 +70,7 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
   layout reconciles multiple providers in its own local adapter. This is the guiding decision behind
   the multi-provider work (Open-Meteo weather, NWS alerts, AQI).
 - **DashboardData** (`models/dashboard_data.py`, the only model left under `models/`) is the
-  aggregate handed to the renderer: `generated_at` (also used as "now" for ETAs) plus
+  aggregate handed to the renderer: `generated_at` (aware UTC; also used as "now" for ETAs) plus
   `source_data: dict[type, Any]`, keyed by each source's produced data class (e.g. `NwsData`,
   `MtaData`). Consumers look up defensively: `data.source_data.get(NwsData)`; a failed or empty
   source is simply absent from the dict.
@@ -156,6 +156,32 @@ subcommand loads it on demand via `_config(ctx)`.
   should show. Don't add a config knob to a source that encodes a display choice (a `rollover_hour`
   knob deciding whether high/low meant today or tomorrow was removed for exactly this reason). The
   worked example and full rule live in `docs/sources.md` ("Report data, not display decisions").
+- **Aware UTC everywhere; a layout converts for display.** `gather()` uses `datetime.now(UTC)`, and
+  every datetime that crosses a boundary (`generated_at`, `now` passed to `fetch`, every timestamp
+  on a produced model) is timezone-aware UTC. Display conversion happens **only** in a layout, via
+  its own required `timezone`. This is what lets one process render a New York and a Bay Area
+  dashboard from the single shared fetch. The convention is stated in the `Source` protocol
+  docstring but is **not enforced** by the registry — `docs/sources.md` is the enforcement
+  mechanism, so a new source has to be told. Two traps a source must handle:
+  - **Deriving a calendar date** ("today") must happen on the *local* value before converting to
+    UTC. Past ~20:00 local the UTC date is already tomorrow, which would skew a daily high/low by a
+    day every evening (see `nws/source.py`).
+  - **Matching hourly buckets** must also happen in local time: provider timestamps sit on local
+    hour boundaries, so truncating a UTC instant to the hour misaligns in half-hour-offset zones
+    (India +05:30, Nepal +05:45, Chatham +12:45).
+- **The Open-Meteo request must keep `timezone=auto` — never `timezone=UTC`.** That parameter also
+  sets the boundaries Open-Meteo aggregates `daily` over. Under UTC a San Francisco high/low would
+  be taken across a 17:00–17:00 local window (measurably different: 18.1 vs 20.8 on a sample day)
+  and `daily.time[0]` would flip to tomorrow every afternoon. The naive-local timestamps are made
+  aware via `ZoneInfo(forecast["timezone"])` — the response's **named** zone, deliberately not its
+  `utc_offset_seconds`, since that offset is only correct at request time and applying it uniformly
+  puts post-DST-transition hours on the wrong instant. A code comment records this; keep it.
+- **MTA arrivals round-trip through the host zone on purpose.** `nyct_gtfs` returns
+  `datetime.fromtimestamp(epoch)` — a naive value in the *host's* local wall clock. `_arrival_at`
+  just calls `stop.arrival.astimezone(UTC)`: `astimezone` interprets a naive value as host-local,
+  the same zone `fromtimestamp` rendered it in, so the two cancel and the exact original instant is
+  recovered regardless of host zone (exact across DST fall-back too — `fromtimestamp` sets `fold`
+  and `astimezone` honors it). This is why **no nyct_gtfs internals are touched**; don't "fix" it.
 - **Multiple dashboards, one fetch.** Config has `dashboards: dict[str, Dashboard]` (named
   `[dashboards.<name>]` tables). `gather()` runs once and every dashboard renders from that shared
   data to its own `output_path`.
@@ -223,9 +249,11 @@ subcommand loads it on demand via `_config(ctx)`.
   legitimately skips). A `Dashboard` owns the **output spec** — `layout` (name), `output_path`,
   `width`, `height`, `gray_levels`, `post_process_method`, `rotate` — while the layout owns **how it
   draws**: render knobs like the font and display temperature units live in `layout_config` (the
-  bundled `glanceable`'s `GlanceableConfig` has a **required** `title` header plus `font` and
-  `weather_temp_units`), not on the
-  dashboard.
+  bundled `glanceable`'s `GlanceableConfig` has a **required** `title` header and a **required**
+  `timezone` plus `font` and `weather_temp_units`), not on the
+  dashboard. `timezone` is typed `ZoneInfo` — pydantic 2.9+ parses the IANA name natively and
+  rejects an unknown zone at config load, so no custom validator. It is intentionally
+  **default-less**: without it a layout would silently print UTC clock times.
 - **`Secret` is the one way a plugin takes a credential.** Any plugin `Config` (source or layout)
   types a credential field as `Secret`, imported from its own toolkit (`sources/toolkit.py` or
   `render/toolkit.py`) — never from `config.py` directly. `Secret` takes **exactly one** of three
