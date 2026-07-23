@@ -14,15 +14,22 @@ from typer.testing import CliRunner
 from kindle_dash_gen import pipeline
 from kindle_dash_gen.cli import app
 from kindle_dash_gen.sources.builtins.mta.model import Direction, StationBoard, TrainArrival
-from kindle_dash_gen.sources.builtins.nws.model import DailyHighLow, NwsData, Temperature
+from kindle_dash_gen.sources.builtins.nws.model import (
+    DailyHighLow,
+    LocationWeather,
+    NwsData,
+    Temperature,
+)
 
 runner = CliRunner()
 
 CONFIG = """
 [sources.nws]
+user_agent = "test-agent (test@example.com)"
+
+[sources.nws.locations."home"]
 latitude = 40.7484
 longitude = -73.9857
-user_agent = "test-agent (test@example.com)"
 
 [sources.mta.stations."Union Sq"]
 
@@ -38,6 +45,7 @@ height = 140
 [dashboards.main.layout_config]
 title = "Test"
 timezone = "America/New_York"
+weather_location = "home"
 """
 
 
@@ -56,6 +64,7 @@ def _two_dashboard_text(first_path: Path, second_path: Path) -> str:
         f'[dashboards.second]\noutput_path = "{second_path.as_posix()}"\n'
         "width = 100\nheight = 140\n"
         '[dashboards.second.layout_config]\ntitle = "Test"\ntimezone = "America/New_York"\n'
+        'weather_location = "home"\n'
     )
     return f"{main}\n{second}"
 
@@ -64,7 +73,7 @@ class _FakeNwsClient:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
-    async def fetch(self, lat, lon):
+    async def fetch(self, locations):
         return None
 
 
@@ -263,9 +272,11 @@ def test_post_process_requires_single_dashboard(tmp_path) -> None:
 
 NWS_ONLY = """
 [sources.nws]
+user_agent = "test-agent (test@example.com)"
+
+[sources.nws.locations."home"]
 latitude = 40.7484
 longitude = -73.9857
-user_agent = "test-agent (test@example.com)"
 
 [dashboards.main]
 output_path = "./out/dash.png"
@@ -284,7 +295,11 @@ output_path = "./out/dash.png"
 
 
 def _weather_report() -> NwsData:
-    return NwsData(
+    return NwsData(locations={"home": _location_report()})
+
+
+def _location_report() -> LocationWeather:
+    return LocationWeather(
         temperature=Temperature(30.0, 32.0),
         conditions="Sunny",
         humidity=50,
@@ -303,7 +318,7 @@ def _weather_report() -> NwsData:
         forecast="Sunny all day",
         forecast_name="Today",
         hourly=[],
-        as_of=datetime(2026, 7, 1, 12, 0, 0),
+        as_of=datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC),
         location_name="New York, NY",
     )
 
@@ -312,7 +327,7 @@ class _FakeNwsWithReport:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
-    async def fetch(self, lat, lon):
+    async def fetch(self, locations):
         return _weather_report()
 
 

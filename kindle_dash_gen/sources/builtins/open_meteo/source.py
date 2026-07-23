@@ -14,6 +14,7 @@ happens in local time, since the feed's timestamps sit on *local* hour boundarie
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -23,7 +24,9 @@ from pydantic import BaseModel, ConfigDict
 from kindle_dash_gen.sources.registry import Source
 from kindle_dash_gen.sources.toolkit import SourceError
 
-from .model import DailyHighLow, HourlyForecast, OpenMeteoData, Temperature
+from .model import DailyHighLow, HourlyForecast, LocationWeather, OpenMeteoData, Temperature
+
+log = logging.getLogger(__name__)
 
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
 AQI_API = "https://air-quality-api.open-meteo.com/v1/air-quality"
@@ -55,21 +58,50 @@ class OpenMeteoClient:
         except niquests.exceptions.RequestException as exc:
             raise OpenMeteoError(f"Open-Meteo request failed: {url}") from exc
 
-    async def fetch(self, lat: float, lon: float) -> OpenMeteoData:
-        """Fetch current conditions, the near-term forecast, and air quality for a location (SI).
+    async def fetch(self, locations: dict[str, Location]) -> OpenMeteoData:
+        """Fetch every configured location concurrently and key the results by name.
+
+        Locations are independent, so one failing is isolated to itself (logged and dropped, so a
+        dashboard drawing that city renders no weather) while the others land; only if every one
+        fails is the whole source unavailable. See the NWS source for why weather degrades per
+        location rather than all-or-nothing like transit.
+        """
+        async with niquests.AsyncSession() as session:
+            results = await asyncio.gather(
+                *(
+                    self._location(session, loc.latitude, loc.longitude)
+                    for loc in locations.values()
+                ),
+                return_exceptions=True,
+            )
+        forecasts: dict[str, LocationWeather] = {}
+        for name, result in zip(locations, results, strict=True):
+            if isinstance(result, OpenMeteoError):
+                log.warning("Open-Meteo location %r unavailable (%s); omitting it", name, result)
+            elif isinstance(result, BaseException):
+                raise result  # a non-OpenMeteoError is a real bug — fail loud
+            else:
+                forecasts[name] = result
+        if len(forecasts) == 0 and len(locations) > 0:
+            raise OpenMeteoError("every Open-Meteo location failed")
+        return OpenMeteoData(locations=forecasts)
+
+    async def _location(
+        self, session: niquests.AsyncSession, lat: float, lon: float
+    ) -> LocationWeather:
+        """One location's forecast + air quality (SI).
 
         The forecast and air-quality endpoints are independent, so they are fetched concurrently.
-        A forecast failure fails the source; an air-quality failure degrades (AQI fields become
+        A forecast failure fails this location; an air-quality failure degrades (AQI fields become
         ``None``) but the rest of the report still lands. ``return_exceptions=True`` lets both
         settle (no orphaned request on a closing session when the forecast fails) — the forecast's
         error is then re-raised, while any air-quality error is dropped to empty enrichment.
         """
-        async with niquests.AsyncSession() as session:
-            results = await asyncio.gather(
-                self._forecast(session, lat, lon),
-                self._air_quality(session, lat, lon),
-                return_exceptions=True,
-            )
+        results = await asyncio.gather(
+            self._forecast(session, lat, lon),
+            self._air_quality(session, lat, lon),
+            return_exceptions=True,
+        )
         forecast, aqi = results
         if isinstance(forecast, BaseException):
             raise forecast
@@ -112,7 +144,7 @@ class OpenMeteoClient:
         }
         return (await self._get_json(session, AQI_API, params)).get("current") or {}
 
-    def _build(self, forecast: dict, aqi: dict) -> OpenMeteoData:
+    def _build(self, forecast: dict, aqi: dict) -> LocationWeather:
         try:
             cur = forecast["current"]
             # Timestamps arrive naive in the location's own zone (timezone=auto). The response also
@@ -134,7 +166,7 @@ class OpenMeteoClient:
             today = date.fromisoformat(forecast["daily"]["time"][0])
             apparent = _float(cur.get("apparent_temperature"))
             temperature = Temperature(cur["temperature_2m"], apparent)
-            return OpenMeteoData(
+            return LocationWeather(
                 temperature=temperature,
                 weather_code=int(cur["weather_code"]),
                 humidity=_int(cur.get("relative_humidity_2m")),
@@ -235,18 +267,26 @@ def _int(value: float | int | None) -> int | None:
     return None if value is None else round(float(value))
 
 
-class OpenMeteoConfig(BaseModel):
-    """Config for the ``[sources.open-meteo]`` table."""
+class Location(BaseModel):
+    """One place to forecast: a latitude/longitude under a name a layout selects by."""
 
     model_config = ConfigDict(extra="forbid")
 
     latitude: float
     longitude: float
+
+
+class OpenMeteoConfig(BaseModel):
+    """Config for the ``[sources.open-meteo]`` table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    locations: dict[str, Location]  # name -> place; a layout picks one by name
     hourly_hours: int = 4  # number of upcoming hourly forecasts to include
 
 
 class OpenMeteoSource(Source[OpenMeteoConfig]):
-    """The ``open-meteo`` source: fetches an :class:`OpenMeteoData` for the configured location."""
+    """The ``open-meteo`` source: an :class:`OpenMeteoData` (one forecast per location)."""
 
     Config = OpenMeteoConfig
 
@@ -255,4 +295,4 @@ class OpenMeteoSource(Source[OpenMeteoConfig]):
         self._client = OpenMeteoClient(config.hourly_hours)
 
     async def fetch(self, now: datetime) -> OpenMeteoData:
-        return await self._client.fetch(self._config.latitude, self._config.longitude)
+        return await self._client.fetch(self._config.locations)

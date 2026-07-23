@@ -74,7 +74,7 @@ class DailyHighLow:
 
 
 @dataclass(frozen=True, kw_only=True)
-class NwsData:
+class LocationWeather:
     """Current conditions plus near-term forecast for one location, from NWS (all SI units)."""
 
     temperature: Temperature  # current conditions
@@ -93,5 +93,17 @@ class NwsData:
     forecast_name: str  # period label, e.g. "This Afternoon", "Tonight"
     hourly: list[HourlyForecast]  # upcoming hours
     as_of: datetime
-    location_name: str | None = None  # e.g. "New York, NY"
+    location_name: str | None = None  # NWS's own label, e.g. "New York, NY"
     alerts: list[WeatherAlert] = field(default_factory=list)  # active NWS alerts
+
+
+@dataclass(frozen=True, kw_only=True)
+class NwsData:
+    """Weather for every configured location, keyed by the config's location name.
+
+    The source contributes this to ``DashboardData.source_data`` under its own type key; a layout
+    looks up the location it wants to draw (``data.locations["NYC"]``). The name is the key both
+    weather sources agree on, so a layout can reconcile Open-Meteo and NWS for the same place.
+    """
+
+    locations: dict[str, LocationWeather]

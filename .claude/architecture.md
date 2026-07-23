@@ -110,8 +110,16 @@ sources do so deliberately:
 ### NWS weather (sources/builtins/nws/)
 
 The `nws` source (`NwsSource` + `NwsConfig`, in `source.py`) wraps `NwsClient` and produces
-`NwsData` (in `model.py`); `WeatherError` subclasses `SourceError`. The NWS API is multi-step.
-`NwsClient.fetch(lat, lon)` opens a `niquests.AsyncSession` (`async with`) and:
+`NwsData` (in `model.py`); `WeatherError` subclasses `SourceError`. `NwsConfig` is multi-location:
+`user_agent`, `locations: dict[str, Location]` (each `Location` just `latitude`/`longitude`, owned
+by this source), and `hourly_hours`. `NwsClient.fetch(locations)` opens one `niquests.AsyncSession`
+and fans out over the configured locations **concurrently** (`asyncio.gather(...,
+return_exceptions=True)`), keying each result by name into `NwsData.locations`. **Per-location
+degrade:** a location that raises `WeatherError` is logged and dropped (that city renders no
+weather) while the others land; only if *every* location fails does `fetch` raise. Any non-
+`WeatherError` is re-raised (fail loud). This differs from the transit sources' all-or-nothing rule
+because a missing city just shows no hero, not a misleading half-populated board — the rationale is
+in the `fetch` docstring. Per location, the NWS API is multi-step; `_fetch(session, lat, lon)`:
 
 1. `GET /points/{lat},{lon}` (coords rounded to 4 dp — NWS rejects more) → returns per-location
    URLs: `forecast`, `forecastHourly`, `forecastGridData`, `observationStations`, plus a
@@ -131,8 +139,8 @@ The `nws` source (`NwsSource` + `NwsConfig`, in `source.py`) wraps `NwsClient` a
      other CAP fields default to `"Unknown"`/`""`/`None`.
 
 **High/Low:** module-level `_day_high_low(daily_periods, day, apparent)` pairs a day's daytime
-(high) and nighttime (low) periods and returns a `DailyHighLow`; `fetch` calls it twice to fill
-`today` and `tomorrow`. Apparent high/low are the max/min feels-like across each period's window.
+(high) and nighttime (low) periods and returns a `DailyHighLow`; the per-location `_fetch` calls it
+twice to fill `today` and `tomorrow`. Apparent high/low are the max/min feels-like across each period's window.
 Two deliberate choices here:
 
 - It matches the day **exactly**, never falling forward to the next available period. NWS drops a
@@ -157,19 +165,23 @@ All parsing failures raise `WeatherError`. Values stay SI at full precision.
 
 The `open-meteo` source (`OpenMeteoSource` + `OpenMeteoConfig`, in `source.py`) wraps
 `OpenMeteoClient` and produces `OpenMeteoData` (in `model.py`); `OpenMeteoError` subclasses
-`SourceError`. Open-Meteo is keyless and global (no `user_agent`); `OpenMeteoConfig` is `latitude`,
-`longitude`, `hourly_hours` (default 4). `OpenMeteoClient.fetch(lat,
-lon)` opens a `niquests.AsyncSession` (`async with`) and hits **two independent endpoints
-concurrently** via `asyncio.gather(..., return_exceptions=True)`:
+`SourceError`. Open-Meteo is keyless and global (no `user_agent`); `OpenMeteoConfig` is multi-
+location: `locations: dict[str, Location]` (each `Location` just `latitude`/`longitude`, owned by
+this source) and `hourly_hours` (default 4). `OpenMeteoClient.fetch(locations)` opens one
+`niquests.AsyncSession` and fans out over the locations **concurrently** (`asyncio.gather(...,
+return_exceptions=True)`), keying each into `OpenMeteoData.locations` with the **same per-location
+degrade rule as NWS** (one location's failure is dropped and logged; all-failing raises; a non-
+`OpenMeteoError` re-raises). Per location, `_location(session, lat, lon)` hits **two independent
+endpoints concurrently** via `asyncio.gather(..., return_exceptions=True)`:
 
 1. `GET /v1/forecast` (`timezone=auto`, `wind_speed_unit=kmh`, `forecast_days=2` so both days'
    high/low are always available) → current conditions, the hourly strip, and daily hi/lo.
 2. `GET` the air-quality API → `us_aqi` + particulates (`pm2_5`, `pm10`, `aerosol_optical_depth`).
 
 `return_exceptions=True` lets both settle even when one fails (no orphaned request on a closing
-session). A **forecast** failure is re-raised as `OpenMeteoError` and isolated by the pipeline; an
-**air-quality** failure **degrades** — those fields become `None` while the rest of the report still
-lands (best-effort enrichment).
+session). A **forecast** failure raises `OpenMeteoError` (dropping just that location, per the
+degrade rule above); an **air-quality** failure **degrades** — those fields become `None` while the
+rest of that location's report still lands (best-effort enrichment).
 
 Times come back **naive-local** (`timezone=auto`) and are made aware UTC via
 `ZoneInfo(forecast["timezone"])` — the response's **named** zone, deliberately *not* its
@@ -324,8 +336,10 @@ import time, and discovery imports them. A layout class implements the `Layout` 
 `build_layout(name, raw, *, width, height)` mirror `sources/registry.py`'s `build_sources`: they
 validate a `[dashboards.<name>.layout_config]` table against the layout's own `Config`
 (`extra="forbid"`), then construct it at the panel size. The bundled `glanceable`'s `GlanceableConfig`
-declares `font: str | None`, `weather_temp_units: Literal["us","si","both"]`, and a **required,
-default-less** `timezone: ZoneInfo`.
+declares `font: str | None`, `weather_temp_units: Literal["us","si","both"]`, a **required,
+default-less** `timezone: ZoneInfo`, a **required, default-less** `weather_location: str` (which
+location's weather to draw, by name), and an optional `transit_boards: list[str] | None` (an
+allowlist of board names; `None` draws all).
 
 **A layout owns display-time conversion.** Everything it is handed is aware UTC, so a bare
 `strftime` would print UTC. `glanceable` stores `self.tz = config.timezone` and applies
@@ -350,15 +364,19 @@ single shared `gather()`. `docs/plugins.md` states the contract for plugin autho
   `layout.render()` and `build_sources()` load the bundled roots on their own for direct callers.
 - **Bundled `glanceable`** lives at `render/builtins/glanceable/` — a self-contained plugin
   subpackage owning its `assets/icons/*.png` (pasted with alpha). It carries the concrete
-  **multi-provider weather adapter**: a private `_weather(data)` **combines** whichever weather
-  providers are present into a layout-local normalized draw surface (`_GlanceWeather`, `_Temp`,
-  `_GlanceHour` — current temp, wind, a resolved icon, the hourly strip, plus `aqi` and `alerts`),
-  the only surface the rest of the layout touches. The hero/hourly come from the **preferred**
-  provider (`OpenMeteoData`, falling back to `NwsData`); **AQI is read off Open-Meteo and alerts off
-  NWS independently**, so a dashboard configured with both shows the Open-Meteo hero *and* NWS alerts
-  (each field is simply absent — `aqi=None` / `alerts=()` — when its provider is not configured, so
-  the draw code never inspects a provider type). A dashboard with neither weather source renders no
-  weather. Icon resolution lives in the adapter, per provider: NWS via the shared `weather_icon()`
+  **multi-provider weather adapter**: a private `_weather(data, location)` **combines** whichever
+  weather providers cover the **selected location** into a layout-local normalized draw surface
+  (`_GlanceWeather`, `_Temp`, `_GlanceHour` — current temp, wind, a resolved icon, the hourly strip,
+  plus `aqi` and `alerts`), the only surface the rest of the layout touches. `location` is the
+  required `weather_location` config value, and it is the **join key across providers**: the adapter
+  looks the *same name* up in each provider's `locations` dict (`om.locations.get(location)`,
+  `nws.locations.get(location)`), so the same "NYC" pairs Open-Meteo's forecast with NWS's alerts.
+  The hero/hourly come from the **preferred** provider (`OpenMeteoData`, falling back to `NwsData`);
+  **AQI is read off Open-Meteo and alerts off NWS independently**, so a dashboard configured with
+  both shows the Open-Meteo hero *and* NWS alerts (each field simply absent — `aqi=None` /
+  `alerts=()` — when its provider lacks that location, so the draw code never inspects a provider
+  type). A `weather_location` no source produced this run (neither provider has it, or neither
+  weather source is configured) renders no weather. Icon resolution lives in the adapter, per provider: NWS via the shared `weather_icon()`
   (keyword match on observed/forecast conditions), Open-Meteo via a local `_wmo_icon(code)`
   WMO-code→icon map (the source keeps the raw code, so the layout, not the source, owns the
   classification). The hero draws AQI (`format_aqi`, EPA breakpoints) and, most-severe-first
@@ -367,12 +385,17 @@ single shared `gather()`. `docs/plugins.md` states the contract for plugin autho
   bold behind the bundled `assets/icons/warning.png`. The icon is sized and centered off the row
   font's **cap band** (`_cap_height`/`_cap_midline`), not Pillow's `lm` anchor, which centers the em
   box (ascent + descent) and so leaves a small-descent face's ink well below the anchor.
-  It carries a **peer transit adapter** built the same way: `_transit(data)` combines whichever
-  transit providers are present into an ordered list of normalized draw surfaces (`_GlanceBoard` =
-  a label + ordered `_GlanceGroup`s; a `_GlanceGroup` = a direction label + `_GlanceArrival`s, each
-  an aware-UTC clock + a route-badge string), via per-provider adapters `_from_mta` /
-  `_from_sf_bay_511`. **MTA boards come first**, so adding a 511 source to an existing dashboard
-  leaves the MTA columns where they were. The draw methods (`_transit_boards`, `_direction_block`)
+  It carries a **peer transit adapter** built the same way: `_transit(data, selected)` combines
+  whichever transit providers are present into an ordered list of normalized draw surfaces
+  (`_GlanceBoard` = a label + ordered `_GlanceGroup`s; a `_GlanceGroup` = a direction label +
+  `_GlanceArrival`s, each an aware-UTC clock + a route-badge string), via per-provider adapters
+  `_from_mta` / `_from_sf_bay_511`. **MTA boards come first**, so adding a 511 source to an existing
+  dashboard leaves the MTA columns where they were. `selected` is the config `transit_boards`
+  allowlist: `_select` keeps only boards whose canonical `.name` is listed (matched *before* the
+  per-provider adapters, so the result stays in **source order**, not the list's order — it's a
+  filter, not a reorder), or all of them when `None`. The 3-board cap below applies **after** this
+  filter, so sibling dashboards fed by one fetch each pick their own drawable few from a larger set
+  of configured stations. The draw methods (`_transit_boards`, `_direction_block`)
   reference no provider type, exactly as `_weather` established. Two adapter-vs-draw seams are
   deliberate: **ordering is the adapter's job, truncation is the draw code's** (a board's groups are
   ordered but the draw takes only the first `_MAX_BLOCKS = 2`, pure geometry); and `_from_sf_bay_511`
@@ -426,9 +449,10 @@ changes the pixels.
 
 - `sources: dict[str, dict[str, Any]]` — the raw `[sources.<name>]` tables. `Config` does **not**
   validate their contents; after plugin discovery, `build_sources()` validates each slice against
-  its plugin's own `Config` model (the `nws` plugin's `NwsConfig`: `latitude`, `longitude`,
-  `user_agent`, `hourly_hours`; the keyless `open-meteo` plugin's `OpenMeteoConfig`:
-  `latitude`, `longitude`, `hourly_hours` — no `user_agent`; the `mta` plugin's
+  its plugin's own `Config` model (the `nws` plugin's `NwsConfig`: `user_agent`, `hourly_hours`, and
+  `locations: dict[str, Location]` whose per-source `Location` is just `latitude`/`longitude`; the
+  keyless `open-meteo` plugin's `OpenMeteoConfig`: `hourly_hours` and its own `locations` dict — no
+  `user_agent`; the `mta` plugin's
   `MtaConfig`: `stations`, whose `Station`/`Platform` models also live in that plugin; the
   `sf-bay-511` plugin's `SfBay511Config`: `api_key` (a `Secret`), `boards`, `timeout`, whose
   `Board`/`StopRequest` models likewise live in that plugin). An unknown
@@ -439,7 +463,8 @@ changes the pixels.
   pixel `width`/`height`, `gray_levels`, `post_process_method`, `rotate`, plus a raw
   `layout_config: dict[str, Any]`. `Config` does **not** validate `layout_config`; `validate_layout`
   checks it against the named layout's own `Config` after discovery. Render knobs (`font`,
-  `weather_temp_units`, `timezone`) live in `layout_config`, not on the dashboard. `timezone` is
+  `weather_temp_units`, `timezone`, `weather_location`, `transit_boards`) live in `layout_config`,
+  not on the dashboard. `timezone` is
   **required** in every `glanceable` dashboard's `layout_config` — a breaking change for existing
   configs, covered by README's "Upgrading an existing config" alongside the removal of
   `rollover_hour`.

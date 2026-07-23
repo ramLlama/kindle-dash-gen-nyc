@@ -100,6 +100,22 @@ A layout class satisfies `kindle_dash_gen.render.layout.Layout`:
   levels) and writes it to the dashboard's `output_path`; drawing at the exact size makes the fit a
   no-op.
 
+### One fetch, many dashboards — select what you draw
+
+`gather()` runs once and feeds every dashboard from the same `source_data`, so a source configured
+anywhere is available to *all* dashboards. A layout that wants each dashboard to show a different
+slice takes that selection in its own config. The bundled `glanceable` does this two ways:
+
+- `weather_location` (required) names which weather location to draw. Weather sources key their
+  results by name (`data.locations["NYC"]`), and that name is also the join key across providers,
+  so the layout reconciles Open-Meteo and NWS for the same place.
+- `transit_boards` (optional) is an allowlist of station names; omit it to draw every board, or
+  list names to keep only those.
+
+Match on the *canonical* name a source produced (the config key / `board.name`), not a display
+label, so renaming what's shown never breaks the selection. This is how sibling dashboards fed by
+one fetch each render their own city and stations.
+
 ### Datetimes reach you as aware UTC
 
 `generated_at` and every datetime inside `source_data` is timezone-aware **in UTC** (see

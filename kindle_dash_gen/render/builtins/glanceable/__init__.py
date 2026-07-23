@@ -33,10 +33,15 @@ from kindle_dash_gen.render.toolkit import (
     weather_icon,
 )
 from kindle_dash_gen.sources.builtins.mta.model import Direction, MtaData, StationBoard
+from kindle_dash_gen.sources.builtins.nws.model import LocationWeather as NwsLocationWeather
 from kindle_dash_gen.sources.builtins.nws.model import NwsData
+from kindle_dash_gen.sources.builtins.open_meteo.model import (
+    LocationWeather as OpenMeteoLocationWeather,
+)
 from kindle_dash_gen.sources.builtins.open_meteo.model import OpenMeteoData
 from kindle_dash_gen.sources.builtins.sf_bay_511.model import Agency as SfAgency
 from kindle_dash_gen.sources.builtins.sf_bay_511.model import SfBay511Data
+from kindle_dash_gen.sources.builtins.sf_bay_511.model import StopBoard as SfBoard
 
 _PACKAGE = "kindle_dash_gen.render.builtins.glanceable"  # this plugin's own package, for assets
 _MARGIN = 44
@@ -96,7 +101,7 @@ def _norm_hours(hours: list) -> list[_GlanceHour]:
     ]
 
 
-def _from_nws(w: NwsData) -> _GlanceWeather:
+def _from_nws(w: NwsLocationWeather) -> _GlanceWeather:
     return _GlanceWeather(
         temperature=_Temp(w.temperature.real, w.temperature.feels_like),
         wind_speed_kmh=w.wind_speed_kmh,
@@ -124,7 +129,7 @@ def _wmo_icon(code: int) -> str:
     return "sunny"
 
 
-def _from_open_meteo(w: OpenMeteoData) -> _GlanceWeather:
+def _from_open_meteo(w: OpenMeteoLocationWeather) -> _GlanceWeather:
     # Open-Meteo has no station observation; the icon comes straight from its WMO weather code.
     return _GlanceWeather(
         temperature=_Temp(w.temperature.real, w.temperature.feels_like),
@@ -140,29 +145,33 @@ def _from_open_meteo(w: OpenMeteoData) -> _GlanceWeather:
 _SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1, "Unknown": 0}
 
 
-def _alert_events(nws: NwsData) -> tuple[str, ...]:
+def _alert_events(nws: NwsLocationWeather) -> tuple[str, ...]:
     """Active-alert event names, most-severe first (ties keep source order)."""
     ordered = sorted(nws.alerts, key=lambda a: _SEVERITY_RANK.get(a.severity, 0), reverse=True)
     return tuple(a.event for a in ordered)
 
 
-def _weather(data: DashboardData) -> _GlanceWeather | None:
-    """Combine whichever weather providers are present into the layout's draw surface.
+def _weather(data: DashboardData, location: str) -> _GlanceWeather | None:
+    """The draw surface for one named location, reconciled across whichever providers cover it.
 
-    Hero/hourly come from the preferred provider (Open-Meteo, global; NWS fallback). AQI is pulled
-    from Open-Meteo and alerts from NWS independently, so a dashboard configured with both shows the
-    Open-Meteo hero *and* NWS alerts. A dashboard with neither weather source renders no weather.
+    ``location`` is the name both weather sources key their results by, so the same "NYC" pairs
+    Open-Meteo's forecast with NWS's alerts. Hero/hourly come from the preferred provider
+    (Open-Meteo, global; NWS fallback); AQI is Open-Meteo's and alerts are NWS's, pulled
+    independently. ``None`` when no configured provider has that location this run (its source was
+    absent or failed), so the dashboard simply shows no weather.
     """
     om = data.source_data.get(OpenMeteoData)
     nws = data.source_data.get(NwsData)
-    if om is not None:
-        base = _from_open_meteo(om)
-    elif nws is not None:
-        base = _from_nws(nws)
+    om_loc = om.locations.get(location) if om is not None else None
+    nws_loc = nws.locations.get(location) if nws is not None else None
+    if om_loc is not None:
+        base = _from_open_meteo(om_loc)
+    elif nws_loc is not None:
+        base = _from_nws(nws_loc)
     else:
         return None
-    aqi = om.us_aqi if om is not None else None
-    alerts = _alert_events(nws) if nws is not None else ()
+    aqi = om_loc.us_aqi if om_loc is not None else None
+    alerts = _alert_events(nws_loc) if nws_loc is not None else ()
     return replace(base, aqi=aqi, alerts=alerts)
 
 
@@ -223,7 +232,7 @@ def _direction_label(direction: str) -> str:
     return _DIRECTION_LABELS.get(str(direction), str(direction))
 
 
-def _from_mta(mta: MtaData) -> list[_GlanceBoard]:
+def _from_mta(boards: list[StationBoard]) -> list[_GlanceBoard]:
     """MTA boards as draw surfaces: always uptown then downtown.
 
     Both blocks are emitted even when a direction has no trains (it draws "No trains"), which is
@@ -237,7 +246,7 @@ def _from_mta(mta: MtaData) -> list[_GlanceBoard]:
                 for label, direction in (("Uptown", Direction.NORTH), ("Downtown", Direction.SOUTH))
             ],
         )
-        for board in mta.boards
+        for board in boards
     ]
 
 
@@ -248,15 +257,15 @@ def _mta_arrivals(board: StationBoard, direction: Direction) -> list[_GlanceArri
     ]
 
 
-def _from_sf_bay_511(bay: SfBay511Data) -> list[_GlanceBoard]:
+def _from_sf_bay_511(boards: list[SfBoard]) -> list[_GlanceBoard]:
     """511 boards as draw surfaces, flattening agency → direction into ordered blocks.
 
     A board can be served by several operators, so each (agency, direction) pair becomes its own
     block. The agency is named in the label only when the board actually spans more than one —
     otherwise every label would carry a redundant prefix.
     """
-    boards = []
-    for board in bay.boards:
+    surfaces = []
+    for board in boards:
         multi_agency = len(board.arrivals) > 1
         groups = []
         for agency in sorted(board.arrivals, key=list(SfAgency).index):
@@ -272,8 +281,8 @@ def _from_sf_bay_511(bay: SfBay511Data) -> list[_GlanceBoard]:
                         ],
                     )
                 )
-        boards.append(_GlanceBoard(label=board.label, groups=groups))
-    return boards
+        surfaces.append(_GlanceBoard(label=board.label, groups=groups))
+    return surfaces
 
 
 def _direction_rank(direction: str) -> int:
@@ -281,20 +290,30 @@ def _direction_rank(direction: str) -> int:
     return _DIRECTION_ORDER.index(value) if value in _DIRECTION_ORDER else len(_DIRECTION_ORDER)
 
 
-def _transit(data: DashboardData) -> list[_GlanceBoard]:
-    """Every transit provider's boards, as one ordered list of draw surfaces.
+def _transit(data: DashboardData, selected: list[str] | None) -> list[_GlanceBoard]:
+    """The transit boards to draw, as one ordered list of draw surfaces.
 
-    MTA first, so adding a Bay Area source to an existing dashboard leaves its columns exactly
-    where they were. A provider that isn't configured simply contributes nothing.
+    ``selected`` is an allowlist of board *names* (the canonical config key, not the display
+    label, so renaming the display never breaks the match). ``None`` draws every board a source
+    produced; a list keeps only those, in source order — MTA first, so adding a Bay Area source to
+    an existing dashboard leaves its columns where they were. This is how one shared fetch feeds
+    several dashboards that each show a different slice of the configured stations.
     """
     boards: list[_GlanceBoard] = []
     mta = data.source_data.get(MtaData)
     if mta is not None:
-        boards.extend(_from_mta(mta))
+        boards.extend(_from_mta(_select(mta.boards, selected)))
     bay = data.source_data.get(SfBay511Data)
     if bay is not None:
-        boards.extend(_from_sf_bay_511(bay))
+        boards.extend(_from_sf_bay_511(_select(bay.boards, selected)))
     return boards
+
+
+def _select(boards: list, selected: list[str] | None) -> list:
+    """Filter provider boards to the allowlisted names, or all of them when unset."""
+    if selected is None:
+        return boards
+    return [board for board in boards if board.name in selected]
 
 
 _GUTTER = 56  # whitespace between station columns
@@ -368,6 +387,14 @@ class GlanceableConfig(BaseModel):
     # a single fetch. pydantic parses the TOML string into a ZoneInfo and rejects an unknown name
     # at config load, so no hand-rolled validator is needed.
     timezone: ZoneInfo
+    # Which weather location to draw, by the name a weather source keyed it under. Required and has
+    # no default: this layout draws one hero, and a weather source may now offer several locations,
+    # so the dashboard must say which. A name no source produced this run renders no weather.
+    weather_location: str
+    # Which transit boards to draw, by their canonical station names. Omit to draw every board the
+    # configured transit sources produced; list names to keep only those (in source order). This is
+    # how sibling dashboards fed by one fetch each show their own stations.
+    transit_boards: list[str] | None = None
     # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
     weather_temp_units: Literal["us", "si", "both"] = "us"
 
@@ -391,16 +418,18 @@ class _Glanceable(Layout[GlanceableConfig]):
         self.title = config.title
         # Every datetime drawn is aware UTC; this is the zone they are shown in.
         self.tz = config.timezone
+        self.weather_location = config.weather_location
+        self.transit_boards = config.transit_boards
         self.img = Image.new("L", (width, height), PAPER)
         self.d = ImageDraw.Draw(self.img)
 
     def render(self, data: DashboardData) -> Image.Image:
         y = self._title(_MARGIN, data.generated_at)
-        weather = _weather(data)
+        weather = _weather(data, self.weather_location)
         if weather is not None:
             y = self._hero(y, weather)
             y = self._hourly(y, weather)
-        self._transit_boards(y, _transit(data))
+        self._transit_boards(y, _transit(data, self.transit_boards))
         return self.img
 
     def _paste_icon(self, name: str, cx: float, cy: float, box: int) -> None:

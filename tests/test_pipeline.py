@@ -23,9 +23,8 @@ from kindle_dash_gen.sources.registry import SourceError
 CONFIG: dict = {
     "sources": {
         "nws": {
-            "latitude": 40.7484,
-            "longitude": -73.9857,
             "user_agent": "test-agent (test@example.com)",
+            "locations": {"home": {"latitude": 40.7484, "longitude": -73.9857}},
         },
         "mta": {"stations": {"Union Sq": {"platforms": [{"lines": ["N", "Q"], "stop_id": "R20"}]}}},
     },
@@ -34,7 +33,11 @@ CONFIG: dict = {
             "output_path": "out/dashboard.png",
             "width": 100,
             "height": 140,
-            "layout_config": {"title": "Test", "timezone": "America/New_York"},
+            "layout_config": {
+                "title": "Test",
+                "timezone": "America/New_York",
+                "weather_location": "home",
+            },
         }
     },
     "schedule": {"interval_minutes": 5},
@@ -77,13 +80,13 @@ class _FailingMtaClient:
 
 
 def _fake_nws(returns=None, raises=None):
-    """A fake NwsClient (patched into the nws source module); its fetch(lat, lon) returns/raises."""
+    """A fake NwsClient (patched into the source module); its fetch(locations) returns/raises."""
 
     class _FakeNwsClient:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        async def fetch(self, lat, lon):
+        async def fetch(self, locations):
             if raises is not None:
                 raise raises
             return returns

@@ -44,10 +44,19 @@ Run with `uv run pytest` (config in `pyproject.toml`: `testpaths = ["tests"]`,
 - `test_sources.py` — `build_sources`: per-plugin `Config` validation of each `[sources.<name>]`
   slice, and fail-fast on an unknown source name or an invalid slice.
 - `test_layout.py` — the layout registry: `validate_layout`/`build_layout` config validation,
-  dispatch, `Fonts` resolution, `LayoutError`, that `glanceable`'s `timezone` is required and
-  rejects an unknown zone at validation, and that a render is pixel-identical across host timezones
-  (the configured `timezone` is the only thing that may change the clock it draws). It also guards
-  the transit adapter: `test_mta_rendering_is_unchanged_by_the_transit_adapter` pins the
+  dispatch, `Fonts` resolution, `LayoutError`, that `glanceable`'s `timezone` **and**
+  `weather_location` are required and that `timezone` rejects an unknown zone at validation, and that
+  a render is pixel-identical across host timezones
+  (the configured `timezone` is the only thing that may change the clock it draws). It covers the
+  **per-dashboard selection** the multi-location work added: `weather_location` picks the named city
+  and reconciles the *same name* across providers (Open-Meteo forecast + NWS alerts), an absent name
+  renders no weather; and the `transit_boards` allowlist keeps only the named boards by **canonical
+  name** (not display label), in **source order**, spanning providers, and composing with the
+  3-board cap (an over-cap config narrowed below the limit renders; four still raises). The weather
+  fixtures reflect the new shape: `_weather()` / `_open_meteo_weather()` build one **inner**
+  `LocationWeather` (so the existing `replace(...)`-based tests stay readable), and `_nws_data()` /
+  `_om_data()` wrap it into the source_data value (`NwsData(locations={LOCATION: ...})`). It also
+  guards the transit adapter: `test_mta_rendering_is_unchanged_by_the_transit_adapter` pins the
   pre-adapter output with **checked-in SHA-256 digests** (weather+boards / boards-only /
   weather-only) so making the transit band provider-agnostic could not shift a single MTA pixel, and
   a test drives a four-column board (two MTA + two 511) to assert the `_MAX_TRANSIT_BOARDS` cap
@@ -57,7 +66,11 @@ Run with `uv run pytest` (config in `pyproject.toml`: `testpaths = ["tests"]`,
 - `test_weather.py` — NWS (`nws` source) multi-step fetch parsing, `_day_high_low` (exact-day match,
   including the evening case where an expired daytime period must report `None` rather than borrow
   tomorrow's high), the `as_of`-anchored "today", apparent-temp series, observation/raining
-  derivation.
+  derivation, and the **multi-location fan-out**: `fetch` keys several locations by name,
+  **per-location degrade** drops just the one whose request is routed to a 500 (the rest land), and
+  *every* location failing raises `WeatherError`. (`test_open_meteo.py` mirrors the same
+  multi-location / per-location-degrade / all-fail trio for the `open-meteo` source, alongside its
+  forecast+AQI concurrency and air-quality degrade.)
 - `test_mta.py` — MTA (`mta` source) feed dedup/reuse, platform merging, per-direction sort, error
   paths, and that arrivals come out as the same aware-UTC instant regardless of the host zone.
 - `test_sf_bay_511.py` — 511 (`sf-bay-511` source) visit parsing, one-request-per-distinct-stopcode

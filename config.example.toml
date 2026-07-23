@@ -13,21 +13,29 @@
 # ones you want; zero sources is valid (every render then skips, keeping the last image). Each
 # source validates its own table strictly (unknown keys are rejected). See docs/sources.md.
 
+# Weather sources hold one or more named locations, keyed like transit stations. A layout selects
+# the one to draw by name (glanceable's `weather_location` below), so a single fetch can serve
+# several dashboards each showing a different city. The name is also the join key both weather
+# sources share: an [sources.open-meteo.locations."NYC"] and an [sources.nws.locations."NYC"] are
+# reconciled for the same place (open-meteo hero + AQI, NWS alerts).
 [sources.nws]              # National Weather Service forecast (keyless, US-only)
-latitude = 40.7484
-longitude = -73.9857
 user_agent = "kindle-dash-gen (you@example.com)"   # NWS requires a User-Agent
 hourly_hours = 4       # number of upcoming hourly forecasts to include
 # Note: display units are NOT set here — they are a per-dashboard choice (weather_temp_units below).
 
+  [sources.nws.locations."NYC"]
+  latitude = 40.7484
+  longitude = -73.9857
+
 # Alternative weather provider: "open-meteo" (keyless, global) also supplies air quality (US AQI +
 # particulates). Configure the source(s) your enabled layouts need — the glanceable layout renders
-# whichever weather type is present, preferring open-meteo when both are configured. To use it,
+# whichever provider covers the selected location, preferring open-meteo when both do. To use it,
 # comment out [sources.nws] above and uncomment this block (no user_agent required):
 # [sources.open-meteo]
-# latitude = 40.7484
-# longitude = -73.9857
 # hourly_hours = 4       # number of upcoming hourly forecasts to include
+#   [sources.open-meteo.locations."NYC"]
+#   latitude = 40.7484
+#   longitude = -73.9857
 
 # The "mta" source: real-time subway arrivals. Stations are keyed by display name, under
 # [sources.mta.stations."Name"]. A station has one or more platform entries
@@ -144,6 +152,13 @@ title = "NYC"
 # layout needs a zone to render local clock times (this is what lets one run serve dashboards
 # in different regions).
 timezone = "America/New_York"
+# Which weather location to draw, by the name it was configured under above. Required — glanceable
+# draws one hero, and a weather source may offer several locations, so the dashboard must say which.
+weather_location = "NYC"
+# Which transit boards (stations) to draw, by their canonical config names. Omit to draw every
+# board the configured transit sources produced; list names to keep only those. This is how sibling
+# dashboards fed by one fetch each show their own stations (max three; see the stations note above).
+# transit_boards = ["Union Sq", "14 St-6 Av"]
 # Display units for weather temperatures: "us" (°F), "si" (°C), or "both".
 weather_temp_units = "both"
 # font: system font family (fontconfig). Omit to let the layout choose its own default (glanceable
@@ -160,9 +175,10 @@ font = "Adwaita Sans"
 # width = 1448
 # height = 1072
 #
-#   [dashboards.landscape.layout_config]   # required: title and timezone have no defaults
+#   [dashboards.landscape.layout_config]   # title, timezone, weather_location have no defaults
 #   title = "NYC"
 #   timezone = "America/New_York"
+#   weather_location = "NYC"
 
 [schedule]
 interval_minutes = 5

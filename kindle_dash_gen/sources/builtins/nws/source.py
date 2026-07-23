@@ -9,6 +9,7 @@ display. The produced data type lives in :mod:`.model`.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
@@ -19,7 +20,16 @@ from pydantic import BaseModel, ConfigDict
 from kindle_dash_gen.sources.registry import Source
 from kindle_dash_gen.sources.toolkit import SourceError
 
-from .model import DailyHighLow, HourlyForecast, NwsData, Temperature, WeatherAlert
+from .model import (
+    DailyHighLow,
+    HourlyForecast,
+    LocationWeather,
+    NwsData,
+    Temperature,
+    WeatherAlert,
+)
+
+log = logging.getLogger(__name__)
 
 NWS_API = "https://api.weather.gov"
 
@@ -67,20 +77,38 @@ class NwsClient:
         except niquests.exceptions.RequestException as exc:
             raise WeatherError(f"NWS request failed: {url}") from exc
 
-    async def fetch(self, lat: float, lon: float) -> NwsData:
-        """Fetch current conditions and the near-term forecast for a location (SI).
+    async def fetch(self, locations: dict[str, Location]) -> NwsData:
+        """Fetch every configured location concurrently and key the results by name.
 
-        NWS is a multi-step API: the ``/points`` lookup must complete first (it yields the per-
-        location URLs), then the five independent downstream calls — hourly, daily, the apparent-
-        temperature grid, the latest observation, and active alerts — are fetched concurrently.
+        Locations are independent, so one failing is isolated to itself: it is logged and dropped
+        (a dashboard drawing that city renders no weather), while the others still land. Only if
+        *every* location fails is the whole source treated as unavailable. This differs from the
+        transit sources' all-or-nothing rule because a missing city is not misleading the way a
+        half-populated arrival board is — it simply shows no hero.
         """
         # NWS requires a User-Agent identifying the caller.
         async with niquests.AsyncSession() as session:
             session.headers["User-Agent"] = self._user_agent
             session.headers["Accept"] = "application/geo+json"
-            return await self._fetch(session, lat, lon)
+            results = await asyncio.gather(
+                *(self._fetch(session, loc.latitude, loc.longitude) for loc in locations.values()),
+                return_exceptions=True,
+            )
+        forecasts: dict[str, LocationWeather] = {}
+        for name, result in zip(locations, results, strict=True):
+            if isinstance(result, WeatherError):
+                log.warning("NWS location %r unavailable (%s); omitting it", name, result)
+            elif isinstance(result, BaseException):
+                raise result  # a non-WeatherError is a real bug — fail loud, like the pipeline does
+            else:
+                forecasts[name] = result
+        if len(forecasts) == 0 and len(locations) > 0:
+            raise WeatherError("every NWS location failed")
+        return NwsData(locations=forecasts)
 
-    async def _fetch(self, session: niquests.AsyncSession, lat: float, lon: float) -> NwsData:
+    async def _fetch(
+        self, session: niquests.AsyncSession, lat: float, lon: float
+    ) -> LocationWeather:
         point = await self._get_json(session, f"{NWS_API}/points/{_point(lat, lon)}")
         try:
             props = point["properties"]
@@ -126,7 +154,7 @@ class NwsClient:
             # open-meteo source anchors (`daily.time[0]` under `timezone=auto`), so the two
             # providers agree on "today" for a layout that mixes them.
             today = as_of_local.date()
-            return NwsData(
+            return LocationWeather(
                 temperature=Temperature(now["temperature"], _apparent_at(apparent, as_of)),
                 conditions=now["shortForecast"],
                 humidity=_percent(now.get("relativeHumidity")),
@@ -359,19 +387,27 @@ def _is_raining(present_weather: list[dict], text: str | None) -> bool:
     return False
 
 
-class NwsConfig(BaseModel):
-    """Config for the ``[sources.nws]`` table."""
+class Location(BaseModel):
+    """One place to forecast: a latitude/longitude under a name a layout selects by."""
 
     model_config = ConfigDict(extra="forbid")
 
     latitude: float
     longitude: float
+
+
+class NwsConfig(BaseModel):
+    """Config for the ``[sources.nws]`` table."""
+
+    model_config = ConfigDict(extra="forbid")
+
     user_agent: str  # NWS requires a User-Agent identifying the caller
+    locations: dict[str, Location]  # name -> place; a layout picks one by name
     hourly_hours: int = 4  # number of upcoming hourly forecasts to include
 
 
 class NwsSource(Source[NwsConfig]):
-    """The ``nws`` source: fetches an :class:`NwsData` for the configured location."""
+    """The ``nws`` source: fetches an :class:`NwsData` (one forecast per configured location)."""
 
     Config = NwsConfig
 
@@ -380,4 +416,4 @@ class NwsSource(Source[NwsConfig]):
         self._client = NwsClient(config.user_agent, config.hourly_hours)
 
     async def fetch(self, now: datetime) -> NwsData:
-        return await self._client.fetch(self._config.latitude, self._config.longitude)
+        return await self._client.fetch(self._config.locations)

@@ -108,7 +108,10 @@ def test_build_sources_resolves_bundled_nws_and_mta() -> None:
 
     resolved = build_sources(
         {
-            "nws": {"latitude": 40.7, "longitude": -73.9, "user_agent": "x"},
+            "nws": {
+                "user_agent": "x",
+                "locations": {"home": {"latitude": 40.7, "longitude": -73.9}},
+            },
             "mta": {"stations": {"Union Sq": {"platforms": [{"lines": ["L"], "stop_id": "L03"}]}}},
         }
     )
@@ -121,4 +124,12 @@ def test_build_sources_resolves_bundled_nws_and_mta() -> None:
 def test_build_sources_rejects_extra_key_in_bundled_source() -> None:
     # Each bundled source keeps extra="forbid", so an unknown key in its slice is rejected.
     with pytest.raises(ValidationError):
-        build_sources({"nws": {"latitude": 1.0, "longitude": 2.0, "user_agent": "x", "bogus": 1}})
+        build_sources(
+            {
+                "nws": {
+                    "user_agent": "x",
+                    "locations": {"h": {"latitude": 1.0, "longitude": 2.0}},
+                    "bogus": 1,
+                }
+            }
+        )

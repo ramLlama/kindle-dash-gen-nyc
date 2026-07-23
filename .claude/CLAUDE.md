@@ -40,14 +40,14 @@ kindle_dash_gen/
                        #   source_config(ctx, name, Config) for a source's own cli() verbs
     registry.py        # Source protocol, register_source, build_sources() dispatch
     builtins/          # bundled source plugins (discovered, not special-cased)
-      nws/             # "nws" source (three-file package):
+      nws/             # "nws" source (three-file package, multi-location):
         __init__.py    #   imports source.py -> register_source("nws", NwsSource)
-        source.py      #   NwsSource + NwsConfig + NwsClient
-        model.py       #   NwsData (+ Temperature, HourlyForecast) — the produced data class
-      open_meteo/      # "open-meteo" source (three-file package, keyless + global):
+        source.py      #   NwsSource + NwsConfig (+ Location) + NwsClient
+        model.py       #   NwsData (wraps locations{name: LocationWeather}; + Temperature, HourlyForecast)
+      open_meteo/      # "open-meteo" source (three-file package, keyless + global, multi-location):
         __init__.py    #   imports source.py -> register_source("open-meteo", OpenMeteoSource)
-        source.py      #   OpenMeteoSource + OpenMeteoConfig + OpenMeteoClient (async, forecast + AQI)
-        model.py       #   OpenMeteoData (+ Temperature, HourlyForecast, wmo_description) — produced data
+        source.py      #   OpenMeteoSource + OpenMeteoConfig (+ Location) + OpenMeteoClient (async, forecast + AQI)
+        model.py       #   OpenMeteoData (wraps locations{name: LocationWeather}; + Temperature, wmo_description)
       mta/             # "mta" source (three-file package, owns its assets):
         __init__.py    #   imports source.py -> register_source("mta", MtaSource)
         source.py      #   MtaSource (+ cli() verb `list-stations`) + MtaConfig (Platform/Station) + MtaClient
@@ -101,7 +101,16 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
   `MuniDirection` (IB/OB **plus** N/S, since Muni's feed emits both), `AcTransitDirection`
   (N/S/E/W) — unioned as `Direction` and disambiguated by each arrival's `agency` field. See the
   gotcha below: these enums are **not disjoint by value**.
-- **NwsData** (`sources/builtins/nws/model.py`) carries current conditions, `today` and `tomorrow`
+- **Both weather sources are multi-location, keyed by name** — the same wrapper shape `MtaData`
+  established. `NwsConfig`/`OpenMeteoConfig` each take `locations: dict[str, Location]` (each source
+  owns its own tiny `Location` = just `latitude`/`longitude`; `user_agent`/`hourly_hours` stay
+  source-level), and `NwsData`/`OpenMeteoData` are thin wrappers holding `locations:
+  dict[str, LocationWeather]` — the per-location weather class each source owns (formerly the flat
+  `NwsData`/`OpenMeteoData` body). The client fans out over the locations concurrently. A layout
+  looks a location up by name (`nws.locations["NYC"]`), and the **name is the join key across
+  providers**: the same "NYC" pairs Open-Meteo's forecast with NWS's alerts.
+- **NwsData** (`sources/builtins/nws/model.py`) wraps `locations: dict[str, LocationWeather]`. Each
+  `LocationWeather` carries current conditions, `today` and `tomorrow`
   (each a `DailyHighLow(day, high, low)` — both days always present, readings `None` when unknown;
   each source owns its own copy of this class, like every other type), upcoming hours, and active
   weather **alerts** (`list[WeatherAlert]`, defaults to `[]`).
@@ -110,7 +119,8 @@ docs/sources.md        # how to write a data-source plugin (the public contract)
   `urgency`, `status`, `message_type`, `area_desc`, `sender_name`, `headline`, `description`,
   `instruction`, `response`, and the `effective`/`onset`/`expires`/`ends` timestamps); alerts are
   carried unfiltered (no severity knob) and are unused by any layout until a layout draws them.
-- **OpenMeteoData** (`sources/builtins/open_meteo/model.py`) is a provider-owned peer to `NwsData`
+- **OpenMeteoData** (`sources/builtins/open_meteo/model.py`) wraps `locations:
+  dict[str, LocationWeather]` too, its `LocationWeather` a provider-owned peer to NWS's
   (its own independent `Temperature`/`HourlyForecast`, no shared hierarchy) for the fields Open-Meteo
   supplies: current conditions, `today`/`tomorrow` high/low, upcoming hours, and a raw WMO
   `weather_code` integer (**not** a description — the layout maps the code to an icon; the model owns
@@ -134,21 +144,24 @@ is deliberate. The CLI bridges with `asyncio.run(...)` at each command boundary;
 plain sync `def`. The fit step is effectively a no-op since the layout already draws at exact size,
 so only quantization matters. The `dashboard` CLI subcommands expose each step in isolation for
 debugging. The "a layout reconciles multiple providers in its own adapter" principle is now realized
-concretely: the bundled `glanceable` layout has a private `_weather` adapter that **combines**
-whichever weather providers are present into one layout-local draw surface — hero/hourly from the
-preferred provider (Open-Meteo, NWS fallback), **AQI off Open-Meteo and alerts off NWS
-independently** (each absent when its provider isn't configured), so `render()` never inspects a
-provider type. The hero draws the AQI badge (`format_aqi`) and the most-severe active alert
+concretely: the bundled `glanceable` layout has a private `_weather(data, location)` adapter that
+**combines** whichever weather providers cover the **selected `weather_location`** into one
+layout-local draw surface — hero/hourly from the preferred provider (Open-Meteo, NWS fallback),
+**AQI off Open-Meteo and alerts off NWS independently** (each absent when its provider isn't
+configured), so `render()` never inspects a provider type. The location name is the **join key
+across providers** (the same "NYC" pairs Open-Meteo's forecast with NWS's alerts); a name no source
+produced this run renders no weather. The hero draws the AQI badge (`format_aqi`) and the most-severe active alert
 (`+N more` tail) through one shared `_metric_row`, which flags an alert — or an "Unhealthy"-or-worse
 AQI (`aqi_is_unhealthy`, EPA 151+) — in bold behind the bundled `warning.png` icon. A peer
 `_transit` adapter does the same for the transit band, combining MTA and 511 boards into one
 normalized draw surface (MTA columns first) so the draw code never inspects a provider type.
 
-The transit panel has the **same shape as the weather adapter**: a private `_transit(data)`
-combines whichever transit providers are present into a layout-local normalized draw surface
-(`_GlanceBoard` / `_GlanceGroup` / `_GlanceArrival`) via per-provider adapters (`_from_mta`,
-`_from_sf_bay_511`), so `glanceable` draws **both MTA subway and SF Bay 511 boards** and the draw
-methods reference no provider type. Together the `_weather` and `_transit` adapters realize the same
+The transit panel has the **same shape as the weather adapter**: a private
+`_transit(data, transit_boards)` combines whichever transit providers are present into a
+layout-local normalized draw surface (`_GlanceBoard` / `_GlanceGroup` / `_GlanceArrival`) via
+per-provider adapters (`_from_mta`, `_from_sf_bay_511`), filtering to the `transit_boards` allowlist
+(by canonical name, in source order) first, so `glanceable` draws **both MTA subway and SF Bay 511
+boards** and the draw methods reference no provider type. Together the `_weather` and `_transit` adapters realize the same
 principle: "a layout reconciles multiple providers in its own local adapter."
 
 See [architecture.md](architecture.md) for data flow, the NWS multi-step fetch, the Open-Meteo
@@ -248,16 +261,35 @@ subcommand loads it on demand via `_config(ctx)`.
   trips with no vehicle assigned) and are skipped; a *half*-null pair **raises**, since a frozen
   dataclass does no runtime type checking and `line=None` would otherwise reach a layout.
   Direction casing and surrounding whitespace are tolerated.
-- **Multiple dashboards, one fetch — and no per-dashboard source selection.** Config has
+- **One fetch, many dashboards — the layout selects its slice.** Config has
   `dashboards: dict[str, Dashboard]` (named `[dashboards.<name>]` tables). `gather()` runs once and
-  every dashboard renders from that **one shared** `source_data`. There is no way to route a source
-  to only some dashboards: a config with both an NYC and an SF transit source draws **all** their
-  boards on **every** dashboard. To get a clean NYC-only board and a separate SF-only board, use
-  **separate config files** (separate `[dashboards.*]` tables in one config would each still draw
-  every source). Likewise the layout draws a **single** weather hero (one location) — it reconciles
-  multiple weather *providers* for that one spot but cannot show two cities' weather at once, and
-  since Open-Meteo is preferred over NWS, configuring the two for *different* cities silently makes
-  the hero the Open-Meteo one.
+  every dashboard renders from that **one shared** `source_data`. Sources now hold **multiple**
+  locations/stations (weather `locations`, transit `stations`/`boards`), so per-dashboard selection
+  is a **layout** concern, done by name, not routing at the source level. `glanceable` has two
+  `layout_config` selectors, both keyed on the **canonical name** (config key / `board.name`), not
+  the display label:
+  - `weather_location: str` — **required, no default**. Names which location's weather to draw; the
+    adapter looks it up in each provider's `locations` dict. Because it's required, a transit-only
+    glanceable dashboard isn't possible (a deliberate choice).
+  - `transit_boards: list[str] | None = None` — an allowlist of board names. `None` draws every
+    board a source produced; a list keeps only those, in **source order** (MTA first), *not* the
+    list's order (it's a filter, not a reorder). The 3-board cap applies **after** the filter, so a
+    config with more stations than fit is fine as long as each dashboard selects a drawable few.
+
+  So sibling dashboards fed by one fetch each render a different city and different stations. This
+  answers the original "multiple weather results" question at the **data layer**: the model now
+  supports many weather locations keyed by name (like stations); `glanceable` renders exactly one
+  (the selected `weather_location`); a future layout could render several. Open-Meteo is still
+  preferred over NWS **for a given location** when both cover it (correct — that's provider
+  reconciliation, not a lost city). The bundled sources/layout are sample templates to fork.
+- **Weather degrades per-location; transit is all-or-nothing.** Both weather sources fetch their
+  `locations` concurrently and drop just the ones that fail (logged), raising their `WeatherError`
+  only if **every** location fails; a dashboard drawing a dropped city renders no hero. This
+  deliberately differs from the transit sources' all-or-nothing rule (a request failing fails the
+  whole source): a missing city just shows no weather, whereas a half-populated arrival board reads
+  as "nothing more is coming" rather than "we don't know". The per-location fan-out uses
+  `return_exceptions=True`, swallows the source's *own* error per-location, and **re-raises any
+  other exception** (fail-loud preserved). The reasoning lives in the two `fetch` docstrings.
 - **Transit boards are capped at three columns.** `glanceable` draws at most
   `_MAX_TRANSIT_BOARDS = 3` transit boards, counted **across all providers combined** (two MTA + two
   511 is four, and fails). `_transit_boards` raises `LayoutError` on a fourth, because past three the
@@ -344,8 +376,9 @@ subcommand loads it on demand via `_config(ctx)`.
   legitimately skips). A `Dashboard` owns the **output spec** — `layout` (name), `output_path`,
   `width`, `height`, `gray_levels`, `post_process_method`, `rotate` — while the layout owns **how it
   draws**: render knobs like the font and display temperature units live in `layout_config` (the
-  bundled `glanceable`'s `GlanceableConfig` has a **required** `title` header and a **required**
-  `timezone` plus `font` and `weather_temp_units`), not on the
+  bundled `glanceable`'s `GlanceableConfig` has a **required** `title` header, a **required**
+  `timezone`, and a **required** `weather_location` — plus optional `transit_boards`, `font`, and
+  `weather_temp_units`), not on the
   dashboard. `timezone` is typed `ZoneInfo` — pydantic 2.9+ parses the IANA name natively and
   rejects an unknown zone at config load, so no custom validator. It is intentionally
   **default-less**: without it a layout would silently print UTC clock times.

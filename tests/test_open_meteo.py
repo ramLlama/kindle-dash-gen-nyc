@@ -11,12 +11,14 @@ from kindle_dash_gen.sources.builtins.open_meteo.model import wmo_description
 from kindle_dash_gen.sources.builtins.open_meteo.source import (
     AQI_API,
     FORECAST_API,
+    Location,
     OpenMeteoClient,
     OpenMeteoError,
     _cardinal,
 )
 
 LAT, LON = 40.7484, -73.9857
+LOCATION = "home"
 LOCAL = timezone(timedelta(hours=-4))  # the fixture's utc_offset_seconds, for readable asserts
 
 
@@ -70,6 +72,14 @@ def _client() -> OpenMeteoClient:
     return OpenMeteoClient()
 
 
+def _fetch(client: OpenMeteoClient | None = None):
+    """Fetch a single location and return its LocationWeather."""
+    result = asyncio.run(
+        (client or _client()).fetch({LOCATION: Location(latitude=LAT, longitude=LON)})
+    )
+    return result.locations[LOCATION]
+
+
 # niquests-mock matches the full URL incl. query unless `params` are given, in which case it
 # subset-matches them and compares the base URL. Both endpoints send `timezone=auto`, so keying on
 # that one param matches any request to each base URL without coupling to the exact query string.
@@ -86,7 +96,7 @@ def _route(router, forecast: dict | None = None, aqi: dict | None = None) -> Non
 def test_fetch_parses_core_fields() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
 
     assert r.temperature.real == 31
     assert r.temperature.feels_like == 33
@@ -104,7 +114,7 @@ def test_fetch_parses_core_fields() -> None:
 def test_upcoming_hours_excludes_current_hour() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     # hourly_hours defaults to 4; the current hour (14:00) is excluded.
     # Stored UTC; the strip's local hours round-trip back to 15:00-18:00.
     assert [h.time.astimezone(LOCAL).hour for h in r.hourly] == [15, 16, 17, 18]
@@ -120,7 +130,7 @@ def test_returns_both_days_high_low() -> None:
     # picks (see docs/sources.md). Apparent high/low come from the day's apparent max/min.
     with nm.mock(assert_all_called=False) as router:
         _route(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.today.day.isoformat() == "2026-07-01"
     assert (r.today.high.real, r.today.high.feels_like) == (34, 35)
     assert (r.today.low.real, r.today.low.feels_like) == (24, 25)
@@ -134,7 +144,7 @@ def test_both_days_are_independent_of_the_hour() -> None:
     # rather than today silently becoming tomorrow.
     with nm.mock(assert_all_called=False) as router:
         _route(router, forecast=_forecast(time="2026-07-01T21:00"))
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.today.day.isoformat() == "2026-07-01"
     assert r.today.high.real == 34
     assert r.tomorrow.day.isoformat() == "2026-07-02"
@@ -153,7 +163,7 @@ def test_tomorrow_absent_from_a_short_forecast_window() -> None:
     }
     with nm.mock(assert_all_called=False) as router:
         _route(router, forecast=forecast)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.today.high.real == 34
     assert r.tomorrow.day.isoformat() == "2026-07-02"
     assert r.tomorrow.high is None
@@ -163,7 +173,7 @@ def test_tomorrow_absent_from_a_short_forecast_window() -> None:
 def test_air_quality_fields() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.us_aqi == 110
     assert r.pm2_5 == 43.8
     assert r.pm10 == 45.1
@@ -174,7 +184,7 @@ def test_air_quality_failure_degrades_gracefully() -> None:
     with nm.mock(assert_all_called=False) as router:
         router.get(FORECAST_API, params=_ANY_QUERY).respond(json=_forecast())
         router.get(AQI_API, params=_ANY_QUERY).respond(status_code=500)  # air quality unavailable
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.us_aqi is None
     assert r.pm2_5 is None
     assert r.aerosol_optical_depth is None
@@ -186,7 +196,7 @@ def test_air_quality_null_current_degrades() -> None:
     with nm.mock(assert_all_called=False) as router:
         router.get(FORECAST_API, params=_ANY_QUERY).respond(json=_forecast())
         router.get(AQI_API, params=_ANY_QUERY).respond(json={"current": None})
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.us_aqi is None
     assert r.temperature.real == 31  # core report still produced
 
@@ -200,7 +210,7 @@ def test_malformed_forecast_raises_open_meteo_error() -> None:
         router.get(FORECAST_API, params=_ANY_QUERY).respond(json=bad)
         router.get(AQI_API, params=_ANY_QUERY).respond(json=AQI)
         with pytest.raises(OpenMeteoError):
-            asyncio.run(_client().fetch(LAT, LON))
+            _fetch()
 
 
 def test_forecast_http_error_raises() -> None:
@@ -208,7 +218,7 @@ def test_forecast_http_error_raises() -> None:
         router.get(FORECAST_API, params=_ANY_QUERY).respond(status_code=500)
         router.get(AQI_API, params=_ANY_QUERY).respond(json=AQI)
         with pytest.raises(OpenMeteoError):
-            asyncio.run(_client().fetch(LAT, LON))
+            _fetch()
 
 
 @pytest.mark.parametrize(
@@ -245,7 +255,7 @@ def test_hours_align_in_a_half_hour_offset_zone() -> None:
     forecast["utc_offset_seconds"] = 19800
     with nm.mock(assert_all_called=False) as router:
         _route(router, forecast=forecast)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     kolkata = ZoneInfo("Asia/Kolkata")
     assert r.as_of == datetime(2026, 7, 1, 8, 30, tzinfo=UTC)  # 14:00 IST
     assert r.precip_probability == 20  # "this hour" still matched despite the :30 offset
@@ -273,7 +283,7 @@ def test_hours_across_a_dst_transition_use_the_right_offset() -> None:
     forecast["daily"]["time"] = ["2026-11-01", "2026-11-02"]
     with nm.mock(assert_all_called=False) as router:
         _route(router, forecast=forecast)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     # 01:00 EDT is 05:00Z; 02:00 EST is 07:00Z (not 06:00Z, which a fixed -04:00 would give).
     assert [h.time for h in r.hourly] == [
         datetime(2026, 11, 1, 5, 0, tzinfo=UTC),
@@ -289,4 +299,44 @@ def test_unknown_timezone_raises_open_meteo_error() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route(router, forecast=forecast)
         with pytest.raises(OpenMeteoError):
-            asyncio.run(_client().fetch(LAT, LON))
+            _fetch()
+
+
+def test_fetch_keys_multiple_locations_by_name() -> None:
+    with nm.mock(assert_all_called=False) as router:
+        _route(router)  # _ANY_QUERY matches either location's request
+        result = asyncio.run(
+            _client().fetch(
+                {
+                    "here": Location(latitude=LAT, longitude=LON),
+                    "also-here": Location(latitude=LAT, longitude=LON),
+                }
+            )
+        )
+    assert set(result.locations) == {"here", "also-here"}
+    assert result.locations["here"].temperature.real == 31
+
+
+def test_one_failing_location_is_dropped_not_fatal() -> None:
+    # A city whose forecast fails is omitted; the others still land (weather degrades per location).
+    with nm.mock(assert_all_called=False) as router:
+        router.get(FORECAST_API, params={"latitude": "2.0"}).respond(status_code=500)
+        router.get(FORECAST_API, params={"latitude": f"{LAT}"}).respond(json=_forecast())
+        router.get(AQI_API, params=_ANY_QUERY).respond(json=AQI)
+        result = asyncio.run(
+            _client().fetch(
+                {
+                    "ok": Location(latitude=LAT, longitude=LON),
+                    "bad": Location(latitude=2.0, longitude=3.0),
+                }
+            )
+        )
+    assert set(result.locations) == {"ok"}
+
+
+def test_every_location_failing_raises() -> None:
+    with nm.mock(assert_all_called=False) as router:
+        router.get(FORECAST_API, params=_ANY_QUERY).respond(status_code=500)
+        router.get(AQI_API, params=_ANY_QUERY).respond(json=AQI)
+        with pytest.raises(OpenMeteoError):
+            asyncio.run(_client().fetch({"here": Location(latitude=LAT, longitude=LON)}))

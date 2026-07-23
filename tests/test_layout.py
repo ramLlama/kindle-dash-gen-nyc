@@ -45,6 +45,7 @@ from kindle_dash_gen.sources.builtins.mta.model import (
 from kindle_dash_gen.sources.builtins.nws.model import (
     DailyHighLow,
     HourlyForecast,
+    LocationWeather,
     NwsData,
     Temperature,
     WeatherAlert,
@@ -53,13 +54,14 @@ from kindle_dash_gen.sources.builtins.open_meteo import model as om
 from kindle_dash_gen.sources.builtins.sf_bay_511 import model as sf
 
 NOW = datetime(2026, 7, 3, 0, 30, 0, tzinfo=UTC)  # 2026-07-02 20:30 EDT
+LOCATION = "home"
 W, H = 1072, 1448
 
 _MISSING = object()  # distinguishes "use default" from an explicit None/[]
 
 
-def _weather() -> NwsData:
-    return NwsData(
+def _weather() -> LocationWeather:
+    return LocationWeather(
         temperature=Temperature(41.0, 44.0),
         conditions="Clear",
         humidity=40,
@@ -90,14 +92,14 @@ def _weather() -> NwsData:
     )
 
 
-def _open_meteo_weather() -> om.OpenMeteoData:
+def _open_meteo_weather() -> om.LocationWeather:
     """An OpenMeteoData carrying the same drawn values as :func:`_weather` (NwsData).
 
     Mirrors every field the glanceable weather section renders (current apparent temp, wind, the
     icon-resolving conditions text, and the hourly strip) so the two providers must render
     identically; the extra AQI fields are unset.
     """
-    return om.OpenMeteoData(
+    return om.LocationWeather(
         temperature=om.Temperature(41.0, 44.0),
         weather_code=0,  # Clear → resolves to the same "sunny" icon as the NWS fixture
         humidity=40,
@@ -155,7 +157,7 @@ def _boards() -> list[StationBoard]:
 
 def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     """Build DashboardData from source_data; a None weather or absent boards omits that key."""
-    w = _weather() if weather is _MISSING else weather
+    w = _nws_data() if weather is _MISSING else weather
     b = _boards() if boards is _MISSING else boards
     source_data: dict[type, object] = {}
     if w is not None:
@@ -165,9 +167,20 @@ def _dashboard(weather=_MISSING, boards=_MISSING) -> DashboardData:
     return DashboardData(generated_at=NOW, source_data=source_data)
 
 
+def _nws_data(inner: LocationWeather | None = None) -> NwsData:
+    return NwsData(locations={LOCATION: inner if inner is not None else _weather()})
+
+
+def _om_data(inner: om.LocationWeather | None = None) -> om.OpenMeteoData:
+    return om.OpenMeteoData(
+        locations={LOCATION: inner if inner is not None else _open_meteo_weather()}
+    )
+
+
 _CONFIG = {
     "title": "NYC",
     "timezone": "America/New_York",
+    "weather_location": LOCATION,
     "font": "Adwaita Sans",
     "weather_temp_units": "both",
 }
@@ -194,9 +207,9 @@ def test_open_meteo_renders_identically_to_nws() -> None:
     # The glanceable adapter fully normalizes each provider, so equivalent NWS and Open-Meteo data
     # produce a byte-identical dashboard — provider choice is invisible at the pixel level.
     boards = MtaData(boards=_boards())
-    nws = DashboardData(generated_at=NOW, source_data={NwsData: _weather(), MtaData: boards})
+    nws = DashboardData(generated_at=NOW, source_data={NwsData: _nws_data(), MtaData: boards})
     open_meteo = DashboardData(
-        generated_at=NOW, source_data={om.OpenMeteoData: _open_meteo_weather(), MtaData: boards}
+        generated_at=NOW, source_data={om.OpenMeteoData: _om_data(), MtaData: boards}
     )
     assert _render(nws).tobytes() == _render(open_meteo).tobytes()
 
@@ -206,7 +219,7 @@ def test_adapter_prefers_open_meteo_when_both_present() -> None:
     from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
 
     nws = _weather()  # wind "SW"
-    open_meteo = om.OpenMeteoData(
+    open_meteo = om.LocationWeather(
         temperature=om.Temperature(10.0, 10.0),
         weather_code=3,  # Overcast → "cloudy" icon
         humidity=None,
@@ -224,8 +237,11 @@ def test_adapter_prefers_open_meteo_when_both_present() -> None:
         pm10=None,
         aerosol_optical_depth=None,
     )
-    data = DashboardData(generated_at=NOW, source_data={NwsData: nws, om.OpenMeteoData: open_meteo})
-    resolved = adapt(data)
+    data = DashboardData(
+        generated_at=NOW,
+        source_data={NwsData: _nws_data(nws), om.OpenMeteoData: _om_data(open_meteo)},
+    )
+    resolved = adapt(data, LOCATION)
     assert resolved is not None
     assert resolved.wind_direction == "NE"  # Open-Meteo won
     assert resolved.icon == "cloudy"  # from Open-Meteo's "Overcast"
@@ -283,8 +299,11 @@ def test_adapter_combines_aqi_and_alerts_across_providers() -> None:
     nws = replace(
         _weather(), alerts=[_alert("Heat Advisory", "Moderate"), _alert("Tornado", "Extreme")]
     )
-    data = DashboardData(generated_at=NOW, source_data={NwsData: nws, om.OpenMeteoData: om_weather})
-    resolved = adapt(data)
+    data = DashboardData(
+        generated_at=NOW,
+        source_data={NwsData: _nws_data(nws), om.OpenMeteoData: _om_data(om_weather)},
+    )
+    resolved = adapt(data, LOCATION)
     assert resolved is not None
     assert resolved.aqi == 110  # from Open-Meteo
     assert resolved.alerts == ("Tornado", "Heat Advisory")  # Extreme before Moderate
@@ -294,16 +313,17 @@ def test_adapter_omits_missing_provider_fields() -> None:
     # NWS-only: no AQI (Open-Meteo absent). Open-Meteo-only: no alerts (NWS absent).
     from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
 
-    nws_only = DashboardData(generated_at=NOW, source_data={NwsData: _weather()})
-    resolved = adapt(nws_only)
+    nws_only = DashboardData(generated_at=NOW, source_data={NwsData: _nws_data()})
+    resolved = adapt(nws_only, LOCATION)
     assert resolved is not None
     assert resolved.aqi is None
     assert resolved.alerts == ()
 
     om_only = DashboardData(
-        generated_at=NOW, source_data={om.OpenMeteoData: replace(_open_meteo_weather(), us_aqi=42)}
+        generated_at=NOW,
+        source_data={om.OpenMeteoData: _om_data(replace(_open_meteo_weather(), us_aqi=42))},
     )
-    resolved = adapt(om_only)
+    resolved = adapt(om_only, LOCATION)
     assert resolved is not None
     assert resolved.aqi == 42
     assert resolved.alerts == ()
@@ -316,8 +336,8 @@ def test_renders_with_aqi_and_alerts() -> None:
     data = DashboardData(
         generated_at=NOW,
         source_data={
-            NwsData: nws,
-            om.OpenMeteoData: om_weather,
+            NwsData: _nws_data(nws),
+            om.OpenMeteoData: _om_data(om_weather),
             MtaData: MtaData(boards=_boards()),
         },
     )
@@ -374,14 +394,14 @@ def test_unhealthy_aqi_is_flagged(monkeypatch, aqi: int, flagged: bool) -> None:
     # is scoped to at-risk groups and stays a plain row.
     data = DashboardData(
         generated_at=NOW,
-        source_data={om.OpenMeteoData: replace(_open_meteo_weather(), us_aqi=aqi)},
+        source_data={om.OpenMeteoData: _om_data(replace(_open_meteo_weather(), us_aqi=aqi))},
     )
     assert ("warning" in _icons_pasted(monkeypatch, data)) is flagged
 
 
 def test_alert_row_draws_warning_icon(monkeypatch) -> None:
     nws = replace(_weather(), alerts=[_alert("Flash Flood Warning", "Severe")])
-    data = DashboardData(generated_at=NOW, source_data={NwsData: nws})
+    data = DashboardData(generated_at=NOW, source_data={NwsData: _nws_data(nws)})
     assert "warning" in _icons_pasted(monkeypatch, data)
 
 
@@ -405,7 +425,11 @@ def test_font_none_falls_back_to_default() -> None:
         width=W,
         height=H,
         layout="glanceable",
-        layout_config={"title": "NYC", "timezone": "America/New_York"},
+        layout_config={
+            "title": "NYC",
+            "timezone": "America/New_York",
+            "weather_location": LOCATION,
+        },
     )
     assert img.size == (W, H)
 
@@ -440,7 +464,12 @@ def test_unknown_layout_config_key_is_rejected() -> None:
             width=W,
             height=H,
             layout="glanceable",
-            layout_config={"title": "NYC", "timezone": "America/New_York", "bogus": 1},
+            layout_config={
+                "title": "NYC",
+                "timezone": "America/New_York",
+                "weather_location": LOCATION,
+                "bogus": 1,
+            },
         )
 
 
@@ -456,6 +485,7 @@ def test_unresolvable_font_raises() -> None:
             layout_config={
                 "title": "NYC",
                 "timezone": "America/New_York",
+                "weather_location": LOCATION,
                 "font": "No Such Font Family 9000",
             },
         )
@@ -590,7 +620,7 @@ def test_from_mta_always_emits_both_directions() -> None:
             ]
         },
     )
-    (glance,) = _from_mta(MtaData(boards=[board]))
+    (glance,) = _from_mta([board])
     assert glance.label == "Union Sq"
     assert [g.label for g in glance.groups] == ["Uptown", "Downtown"]
     assert [a.label for a in glance.groups[0].arrivals] == ["N"]
@@ -606,7 +636,7 @@ def test_from_sf_bay_511_labels_directions_and_uses_the_line_as_the_badge() -> N
             }
         },
     )
-    (glance,) = _from_sf_bay_511(sf.SfBay511Data(boards=[board]))
+    (glance,) = _from_sf_bay_511([board])
     assert glance.label == "Embarcadero"
     assert [g.label for g in glance.groups] == ["Northbound"]
     assert [a.label for a in glance.groups[0].arrivals] == ["Green-N"]
@@ -629,7 +659,7 @@ def test_from_sf_bay_511_prefixes_the_agency_only_when_a_board_spans_several() -
             },
         },
     )
-    (glance,) = _from_sf_bay_511(sf.SfBay511Data(boards=[shared]))
+    (glance,) = _from_sf_bay_511([shared])
     assert [g.label for g in glance.groups] == ["BART Northbound", "Muni Inbound"]
 
 
@@ -653,7 +683,7 @@ def test_from_sf_bay_511_orders_groups_canonically() -> None:
             }
         },
     )
-    (glance,) = _from_sf_bay_511(sf.SfBay511Data(boards=[board]))
+    (glance,) = _from_sf_bay_511([board])
     assert [g.label for g in glance.groups] == ["Northbound", "Southbound", "Westbound"]
 
 
@@ -687,12 +717,12 @@ def test_transit_combines_providers_with_mta_first() -> None:
     mta = MtaData(boards=[StationBoard(name="Union Sq", arrivals_by_direction={})])
     bay = sf.SfBay511Data(boards=[sf.StopBoard(name="Embarcadero", arrivals={})])
     both = DashboardData(generated_at=NOW, source_data={MtaData: mta, sf.SfBay511Data: bay})
-    assert [b.label for b in _transit(both)] == ["Union Sq", "Embarcadero"]
+    assert [b.label for b in _transit(both, None)] == ["Union Sq", "Embarcadero"]
     only_mta = DashboardData(generated_at=NOW, source_data={MtaData: mta})
-    assert [b.label for b in _transit(only_mta)] == ["Union Sq"]
+    assert [b.label for b in _transit(only_mta, None)] == ["Union Sq"]
     only_bay = DashboardData(generated_at=NOW, source_data={sf.SfBay511Data: bay})
-    assert [b.label for b in _transit(only_bay)] == ["Embarcadero"]
-    assert _transit(DashboardData(generated_at=NOW, source_data={})) == []
+    assert [b.label for b in _transit(only_bay, None)] == ["Embarcadero"]
+    assert _transit(DashboardData(generated_at=NOW, source_data={}), None) == []
 
 
 def _sf_dashboard() -> DashboardData:
@@ -874,3 +904,107 @@ def test_the_board_limit_counts_across_providers() -> None:
     data = DashboardData(generated_at=NOW, source_data={MtaData: mta, sf.SfBay511Data: bay})
     with pytest.raises(LayoutError):
         _render(data)
+
+
+# ── Per-dashboard selection (weather_location + transit_boards) ─────────────────────────────────
+# One shared fetch can carry several cities and stations; each dashboard's layout_config picks the
+# slice it draws. This is what lets sibling dashboards show different places from one gather().
+
+
+def test_weather_location_picks_the_named_city() -> None:
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    warm = replace(_weather(), temperature=Temperature(30.0, 30.0))
+    cold = replace(_weather(), temperature=Temperature(-5.0, -5.0))
+    data = DashboardData(
+        generated_at=NOW,
+        source_data={NwsData: NwsData(locations={"NYC": warm, "SF": cold})},
+    )
+    assert adapt(data, "NYC").temperature.real == 30.0
+    assert adapt(data, "SF").temperature.real == -5.0
+
+
+def test_weather_location_absent_from_data_renders_no_weather() -> None:
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    data = DashboardData(generated_at=NOW, source_data={NwsData: _nws_data()})
+    assert adapt(data, "not-configured") is None
+
+
+def test_weather_reconciles_the_same_name_across_providers() -> None:
+    # The city name is the join key: Open-Meteo's "NYC" forecast pairs with NWS's "NYC" alerts.
+    from kindle_dash_gen.render.builtins.glanceable import _weather as adapt
+
+    om_nyc = replace(_open_meteo_weather(), us_aqi=88)
+    nws_nyc = replace(_weather(), alerts=[_alert("Heat Advisory", "Moderate")])
+    data = DashboardData(
+        generated_at=NOW,
+        source_data={
+            om.OpenMeteoData: om.OpenMeteoData(locations={"NYC": om_nyc}),
+            NwsData: NwsData(locations={"NYC": nws_nyc}),
+        },
+    )
+    resolved = adapt(data, "NYC")
+    assert resolved.aqi == 88  # Open-Meteo's
+    assert resolved.alerts == ("Heat Advisory",)  # NWS's
+
+
+def test_weather_location_is_required() -> None:
+    with pytest.raises(ValidationError):
+        render(
+            _dashboard(),
+            width=W,
+            height=H,
+            layout="glanceable",
+            layout_config={"title": "NYC", "timezone": "America/New_York"},
+        )
+
+
+def test_transit_boards_none_draws_every_board() -> None:
+    boards = [StationBoard(name=f"S{i}", arrivals_by_direction={}) for i in range(2)]
+    data = DashboardData(generated_at=NOW, source_data={MtaData: MtaData(boards=boards)})
+    assert [b.label for b in _transit(data, None)] == ["S0", "S1"]
+
+
+def test_transit_boards_allowlist_keeps_only_named_boards() -> None:
+    boards = [
+        StationBoard(name=n, arrivals_by_direction={}) for n in ("Union Sq", "14 St", "Bergen")
+    ]
+    data = DashboardData(generated_at=NOW, source_data={MtaData: MtaData(boards=boards)})
+    kept = _transit(data, ["Bergen", "Union Sq"])
+    # Filtered to the allowlisted names, in source order (not the list's order).
+    assert [b.label for b in kept] == ["Union Sq", "Bergen"]
+
+
+def test_transit_boards_selects_by_canonical_name_not_display_label() -> None:
+    # display_name overrides the label a layout shows, but selection matches the canonical name so
+    # renaming the display never breaks the allowlist.
+    board = StationBoard(name="union-sq", arrivals_by_direction={}, display_name="Union Square")
+    data = DashboardData(generated_at=NOW, source_data={MtaData: MtaData(boards=[board])})
+    (kept,) = _transit(data, ["union-sq"])
+    assert kept.label == "Union Square"
+
+
+def test_transit_boards_filter_spans_providers() -> None:
+    mta = MtaData(boards=[StationBoard(name="Union Sq", arrivals_by_direction={})])
+    bay = sf.SfBay511Data(boards=[sf.StopBoard(name="Embarcadero", arrivals={})])
+    data = DashboardData(generated_at=NOW, source_data={MtaData: mta, sf.SfBay511Data: bay})
+    assert [b.label for b in _transit(data, ["Embarcadero"])] == ["Embarcadero"]
+
+
+def test_transit_boards_narrows_an_over_cap_config_below_the_limit() -> None:
+    # The 3-board cap lives after the allowlist, on purpose: a config with more stations than fit
+    # is fine as long as each dashboard selects a drawable few. Four configured, two selected.
+    boards = [StationBoard(name=f"S{i}", arrivals_by_direction={}) for i in range(4)]
+    data = DashboardData(generated_at=NOW, source_data={MtaData: MtaData(boards=boards)})
+    cfg = {**_CONFIG, "transit_boards": ["S0", "S2"]}
+    img = render(data, width=W, height=H, layout="glanceable", layout_config=cfg)
+    assert img.size == (W, H)
+
+
+def test_selecting_more_than_three_boards_still_overflows() -> None:
+    boards = [StationBoard(name=f"S{i}", arrivals_by_direction={}) for i in range(5)]
+    data = DashboardData(generated_at=NOW, source_data={MtaData: MtaData(boards=boards)})
+    cfg = {**_CONFIG, "transit_boards": ["S0", "S1", "S2", "S3"]}
+    with pytest.raises(LayoutError):
+        render(data, width=W, height=H, layout="glanceable", layout_config=cfg)

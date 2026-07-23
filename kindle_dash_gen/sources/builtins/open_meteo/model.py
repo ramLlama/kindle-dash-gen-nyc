@@ -84,13 +84,13 @@ class DailyHighLow:
 
 
 @dataclass(frozen=True, kw_only=True)
-class OpenMeteoData:
+class LocationWeather:
     """Current conditions, near-term forecast, and air quality for one location (all SI units).
 
-    A full peer to :class:`~kindle_dash_gen.sources.builtins.nws.model.NwsData` for the fields
-    Open-Meteo can supply, plus air-quality fields (``us_aqi`` and particulates, so wildfire smoke
-    folds in) that NWS does not provide. Air-quality is a best-effort enrichment: if that endpoint
-    fails, its fields are ``None`` while the rest of the report still lands.
+    A full peer to :class:`~kindle_dash_gen.sources.builtins.nws.model.LocationWeather` for the
+    fields Open-Meteo can supply, plus air-quality fields (``us_aqi`` and particulates, so wildfire
+    smoke folds in) that NWS does not provide. Air-quality is a best-effort enrichment: if that
+    endpoint fails, its fields are ``None`` while the rest of the report still lands.
     """
 
     temperature: Temperature  # current conditions
@@ -112,3 +112,15 @@ class OpenMeteoData:
     pm10: float | None  # µg/m³
     aerosol_optical_depth: float | None  # unitless; elevated by wildfire smoke
     location_name: str | None = None  # Open-Meteo returns no place name, so always None for now
+
+
+@dataclass(frozen=True, kw_only=True)
+class OpenMeteoData:
+    """Weather for every configured location, keyed by the config's location name.
+
+    Contributed to ``DashboardData.source_data`` under its own type key; a layout looks up the
+    location it draws (``data.locations["SF"]``). The name is the key both weather sources share,
+    so a layout can reconcile Open-Meteo and NWS for the same place.
+    """
+
+    locations: dict[str, LocationWeather]

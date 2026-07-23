@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from kindle_dash_gen.sources.builtins.nws.model import Temperature
 from kindle_dash_gen.sources.builtins.nws.source import (
+    Location,
     NwsClient,
     NwsConfig,
     WeatherError,
@@ -17,6 +18,7 @@ from kindle_dash_gen.sources.builtins.nws.source import (
 )
 
 LAT, LON = 40.7484, -73.9857
+LOCATION = "home"
 LOCAL = timezone(timedelta(hours=-4))  # the fixture's EDT offset, for readable asserts
 POINTS_URL = f"https://api.weather.gov/points/{LAT:.4f},{LON:.4f}"
 FORECAST_URL = "https://api.weather.gov/gridpoints/OKX/34,44/forecast"
@@ -174,10 +176,18 @@ def _client() -> NwsClient:
     return NwsClient("test-agent (t@example.com)")
 
 
+def _fetch(client: NwsClient | None = None):
+    """Fetch a single location and return its LocationWeather (most tests want one place)."""
+    result = asyncio.run(
+        (client or _client()).fetch({LOCATION: Location(latitude=LAT, longitude=LON)})
+    )
+    return result.locations[LOCATION]
+
+
 def test_fetch_parses_core_fields() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
 
     assert r.temperature.real == 31
     assert r.temperature.feels_like == 40.6  # raw float, not rounded
@@ -195,7 +205,7 @@ def test_fetch_parses_core_fields() -> None:
 def test_upcoming_hours_excludes_current_hour() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     # hourly_hours defaults to 4; the current hour (14:00) is excluded.
     # Stored UTC; the strip's local hours round-trip back to 15:00-18:00.
     assert [h.time.astimezone(LOCAL).hour for h in r.hourly] == [15, 16, 17, 18]
@@ -208,7 +218,7 @@ def test_upcoming_hours_excludes_current_hour() -> None:
 def test_raining_from_present_weather() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router, obs=_obs([{"weather": "rain"}], "Light Rain"))
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.raining is True
     assert r.observed_conditions == "Light Rain"
 
@@ -216,7 +226,7 @@ def test_raining_from_present_weather() -> None:
 def test_not_raining_when_clear() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router, obs=_obs([], "Clear"))
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.raining is False
 
 
@@ -228,7 +238,7 @@ def test_observation_failure_degrades_gracefully() -> None:
         router.get(GRID_URL).respond(json=GRID)
         router.get(STATIONS_URL).respond(status_code=500)  # observation unavailable
         router.get(ALERTS_URL, params={"point": f"{LAT:.4f},{LON:.4f}"}).respond(json=NO_ALERTS)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.raining is None
     assert r.observed_conditions is None
     assert r.temperature.real == 31  # core report still produced
@@ -237,7 +247,7 @@ def test_observation_failure_degrades_gracefully() -> None:
 def test_alerts_parsed() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router, alerts=ALERTS)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert [a.event for a in r.alerts] == ["Flash Flood Warning", "Special Weather Statement"]
     first = r.alerts[0]
     assert first.category == "Met"
@@ -276,14 +286,14 @@ def test_malformed_alert_feature_is_skipped() -> None:
     }
     with nm.mock(assert_all_called=False) as router:
         _route_all(router, alerts=malformed)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert [a.event for a in r.alerts] == ["Flash Flood Warning"]
 
 
 def test_no_active_alerts() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)  # NO_ALERTS by default
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.alerts == []
 
 
@@ -296,7 +306,7 @@ def test_alerts_failure_degrades_gracefully() -> None:
         router.get(STATIONS_URL).respond(json=STATIONS)
         router.get(OBS_URL).respond(json=_obs([], "Clear"))
         router.get(ALERTS_URL, params={"point": f"{LAT:.4f},{LON:.4f}"}).respond(status_code=500)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.alerts == []  # alert-endpoint failure isolated
     assert r.temperature.real == 31  # core report still produced
 
@@ -358,7 +368,7 @@ def test_fetch_anchors_today_on_the_current_hour_not_the_first_daily_period() ->
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)
         router.get(FORECAST_URL, params={"units": "si"}).respond(json=evening_forecast)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.today.day.isoformat() == "2026-07-01"
     assert r.today.high is None
     assert r.today.low.real == 24
@@ -371,7 +381,7 @@ def test_fetch_returns_both_days_high_low() -> None:
     # first daily period the feed returns, and a layout picks (see docs/sources.md).
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.today.day.isoformat() == "2026-07-01"
     assert r.today.high.real == 34
     assert r.today.low.real == 24
@@ -390,7 +400,7 @@ def test_http_error_raises_weather_error() -> None:
     with nm.mock(assert_all_called=False) as router:
         router.get(POINTS_URL).respond(status_code=500)
         with pytest.raises(WeatherError):
-            asyncio.run(_client().fetch(LAT, LON))
+            _fetch()
 
 
 def test_sends_user_agent_header() -> None:
@@ -402,7 +412,7 @@ def test_sends_user_agent_header() -> None:
         router.get(STATIONS_URL).respond(json=STATIONS)
         router.get(OBS_URL).respond(json=_obs([], "Clear"))
         router.get(ALERTS_URL, params={"point": f"{LAT:.4f},{LON:.4f}"}).respond(json=NO_ALERTS)
-        asyncio.run(NwsClient("my-agent (t@example.com)").fetch(LAT, LON))
+        _fetch(NwsClient("my-agent (t@example.com)"))
         assert points_route.calls[-1].request.headers["User-Agent"] == "my-agent (t@example.com)"
 
 
@@ -433,7 +443,7 @@ def test_today_is_the_local_date_not_the_utc_date() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router)
         router.get(HOURLY_URL, params={"units": "si"}).respond(json=evening)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     assert r.as_of == datetime(2026, 7, 2, 1, 0, tzinfo=UTC)  # stored UTC is already Jul 2
     assert r.today.day.isoformat() == "2026-07-01"  # but "today" is still Jul 1 locally
     assert r.tomorrow.day.isoformat() == "2026-07-02"
@@ -442,10 +452,51 @@ def test_today_is_the_local_date_not_the_utc_date() -> None:
 def test_alert_timestamps_are_normalized_to_utc() -> None:
     with nm.mock(assert_all_called=False) as router:
         _route_all(router, alerts=ALERTS)
-        r = asyncio.run(_client().fetch(LAT, LON))
+        r = _fetch()
     alert = r.alerts[0]
     assert alert.effective == datetime(2026, 7, 1, 18, 0, tzinfo=UTC)  # 14:00 EDT
     assert all(
         t is None or t.utcoffset().total_seconds() == 0
         for t in (alert.effective, alert.onset, alert.expires, alert.ends)
     )
+
+
+def test_fetch_keys_multiple_locations_by_name() -> None:
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router)
+        result = asyncio.run(
+            _client().fetch(
+                {
+                    "here": Location(latitude=LAT, longitude=LON),
+                    "also-here": Location(latitude=LAT, longitude=LON),
+                }
+            )
+        )
+    assert set(result.locations) == {"here", "also-here"}
+    assert result.locations["here"].temperature.real == 31
+
+
+def test_one_failing_location_is_dropped_not_fatal() -> None:
+    # A city that fails is omitted; the others still land (unlike transit's all-or-nothing).
+    bad = (2.0, 3.0)
+    with nm.mock(assert_all_called=False) as router:
+        _route_all(router)  # the "ok" location's points/forecast/... all succeed
+        router.get(f"https://api.weather.gov/points/{bad[0]:.4f},{bad[1]:.4f}").respond(
+            status_code=500
+        )
+        result = asyncio.run(
+            _client().fetch(
+                {
+                    "ok": Location(latitude=LAT, longitude=LON),
+                    "bad": Location(latitude=bad[0], longitude=bad[1]),
+                }
+            )
+        )
+    assert set(result.locations) == {"ok"}
+
+
+def test_every_location_failing_raises() -> None:
+    with nm.mock(assert_all_called=False) as router:
+        router.get(POINTS_URL).respond(status_code=500)
+        with pytest.raises(WeatherError):
+            asyncio.run(_client().fetch({"here": Location(latitude=LAT, longitude=LON)}))

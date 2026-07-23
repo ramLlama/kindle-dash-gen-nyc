@@ -10,9 +10,11 @@ from kindle_dash_gen.config import Secret, load_config
 
 EXAMPLE = """
 [sources.nws]
+user_agent = "test-agent (test@example.com)"
+
+[sources.nws.locations."home"]
 latitude = 40.7484
 longitude = -73.9857
-user_agent = "test-agent (test@example.com)"
 
 [sources.mta.stations."Union Sq"]
 
@@ -49,7 +51,7 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     cfg = load_config(_write(tmp_path, EXAMPLE))
 
     # Sources are kept as raw tables here; each is validated by its own plugin (see test_sources).
-    assert cfg.sources["nws"]["latitude"] == 40.7484
+    assert cfg.sources["nws"]["locations"]["home"]["latitude"] == 40.7484
     assert list(cfg.sources["mta"]["stations"].keys()) == ["Union Sq"]
     dash = cfg.dashboards["main"]
     assert dash.width == 1072  # default (portrait)
